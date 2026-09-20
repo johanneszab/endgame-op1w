@@ -32,8 +32,17 @@ Everything the vendor tool exposes, except firmware update:
 
 ## Building
 
+### Debian based (apt)
 ```bash
 sudo apt install build-essential cmake pkg-config libhidapi-dev qt6-base-dev
+cmake -B build -S .
+cmake --build build -j
+```
+
+### Red hat based (dnf)
+```bash
+sudo dnf install @c-development @development-tools
+sudo dnf install build-essential cmake pkgconf-pkg-config hidapi-devel qt6-qtbase-devel
 cmake -B build -S .
 cmake --build build -j
 ```
@@ -45,8 +54,7 @@ The GUI is optional — if Qt 6 isn't found, only `egg-cli` is built.
 
 ## Permissions
 
-`hidraw` nodes are root-only by default. Install the udev rule and replug the
-dongle:
+`hidraw` nodes are root-only by default. Install the udev rule if you want to use the application as non-root user:
 
 ```bash
 sudo cp udev/70-endgamegear.rules /etc/udev/rules.d/
