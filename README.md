@@ -40,6 +40,9 @@ cmake --build build -j
 
 The GUI is optional — if Qt 6 isn't found, only `egg-cli` is built.
 
+## Screenshot:
+![GUI](images/gui.png?raw=true "GUI")
+
 ## Permissions
 
 `hidraw` nodes are root-only by default. Install the udev rule and replug the
