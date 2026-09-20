@@ -1,0 +1,47 @@
+=== HID / file API call sites ===
+
+--- HidD_SetFeature  (2 calling function(s)) ---
+    FUN_00403740  @ 00403740
+    FUN_00404860  @ 00404860
+
+--- HidD_GetFeature  (1 calling function(s)) ---
+    FUN_00403810  @ 00403810
+
+--- HidD_GetAttributes  (1 calling function(s)) ---
+    FUN_004034e0  @ 004034e0
+
+--- HidD_GetPreparsedData  (1 calling function(s)) ---
+    FUN_004034e0  @ 004034e0
+
+--- HidP_GetCaps  (1 calling function(s)) ---
+    FUN_004034e0  @ 004034e0
+
+--- HidD_SetNumInputBuffers  (0 calling function(s)) ---
+
+--- HidD_GetProductString  (0 calling function(s)) ---
+
+--- CreateFileW  (6 calling function(s)) ---
+    SaveMenuBar  @ 00457891
+    ___initconout  @ 00523109
+    FUN_004034e0  @ 004034e0
+    Open  @ 00427770
+    FID_conflict:CreateFileA  @ 00426ed7
+    Load  @ 004785ff
+
+--- CreateFileA  (2 calling function(s)) ---
+    hid_enumerate  @ 004028e0
+    hid_open_path  @ 00402eb0
+
+--- ReadFile  (3 calling function(s)) ---
+    hid_read_timeout  @ 004030d0
+    Read  @ 00426f4b
+    __read_nolock  @ 0051d793
+
+--- WriteFile  (4 calling function(s)) ---
+    hid_write  @ 00403010
+    __NMSG_WRITE  @ 005132ba
+    Write  @ 00426f8d
+    __write_nolock  @ 0051de40
+
+--- DeviceIoControl  (1 calling function(s)) ---
+    hid_get_feature_report  @ 00403260

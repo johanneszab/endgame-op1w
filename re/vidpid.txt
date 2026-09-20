@@ -1,0 +1,51 @@
+
+################################################################
+### Endgame_Gear_OP1w_4k_Configuration_Tool_v1.03.exe
+################################################################
+
+--- 4 instruction(s) referencing VID 0x3367 ---
+    00409a99   PUSH 0x3367                     in FUN_00409a70
+    00409b21   PUSH 0x3367                     in FUN_00409b00
+    00409ba4   PUSH 0x3367                     in FUN_00409b70
+    00409bdd   PUSH 0x3367                     in FUN_00409b70
+
+--- decompiled call sites ---
+    FUN_00409a70                 iVar2 = FUN_004035a0(0x3367,0x1970);
+    FUN_00409a70                 iVar2 = FUN_004035a0(0x3367,0x1970);
+    FUN_00409b00                 iVar2 = FUN_004035a0(0x3367,0x1970);
+    FUN_00409b70                 iVar2 = FUN_004035a0(0x3367,0x1972);
+    FUN_00409b70                 iVar2 = FUN_004035a0(0x3367,0x1970);
+
+################################################################
+### endgame_gear_xm2w 4k_configuration_tool_v1_03.exe
+################################################################
+
+--- 4 instruction(s) referencing VID 0x3367 ---
+    00409a99   PUSH 0x3367                     in FUN_00409a70
+    00409b21   PUSH 0x3367                     in FUN_00409b00
+    00409ba4   PUSH 0x3367                     in FUN_00409b70
+    00409bdd   PUSH 0x3367                     in FUN_00409b70
+
+--- decompiled call sites ---
+    FUN_00409a70                 iVar2 = FUN_004035a0(0x3367,0x1970);
+    FUN_00409a70                 iVar2 = FUN_004035a0(0x3367,0x1970);
+    FUN_00409b00                 iVar2 = FUN_004035a0(0x3367,0x1970);
+    FUN_00409b70                 iVar2 = FUN_004035a0(0x3367,0x1968);
+    FUN_00409b70                 iVar2 = FUN_004035a0(0x3367,0x1970);
+
+################################################################
+### Endgame_Gear_XM2w_4k_v2_Configuration_Tool_v1_02-9961aeac.exe
+################################################################
+
+--- 4 instruction(s) referencing VID 0x3367 ---
+    004099a9   PUSH 0x3367                     in FUN_00409980
+    00409a31   PUSH 0x3367                     in FUN_00409a10
+    00409ab4   PUSH 0x3367                     in FUN_00409a80
+    00409aed   PUSH 0x3367                     in FUN_00409a80
+
+--- decompiled call sites ---
+    FUN_00409980                 iVar2 = FUN_004034e0(0x3367,0x1970);
+    FUN_00409980                 iVar2 = FUN_004034e0(0x3367,0x1970);
+    FUN_00409a10                 iVar2 = FUN_004034e0(0x3367,0x1970);
+    FUN_00409a80                 iVar2 = FUN_004034e0(0x3367,0x1982);
+    FUN_00409a80                 iVar2 = FUN_004034e0(0x3367,0x1970);

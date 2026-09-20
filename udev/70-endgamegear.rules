@@ -1,0 +1,12 @@
+# Endgame Gear OP1w 4k v2 — let the logged-in user talk to the configuration
+# collection via hidraw.
+#
+# Install:
+#   sudo cp 70-endgamegear.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# then replug the dongle.
+
+# Wireless dongle
+KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1970", TAG+="uaccess"
+# Mouse connected by cable
+KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1984", TAG+="uaccess"
