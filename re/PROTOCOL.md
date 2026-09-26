@@ -659,6 +659,17 @@ Consequences for a port:
    Input reports from remapped buttons (keyboard report `0x02`, consumer `0x06`)
    arrive on the same node and must be filtered out by report ID.
 
+   > The corollary bites if you build this tool anywhere else: on Windows the
+   > interface is split into one device path per collection, each with its own
+   > read queue, so a `hid_read` on the config collection never sees a
+   > notification. `MI_01` of the dongle presents as four HID children —
+   > `Col02` (config, usage `0xFF01`/`0x02`) plus `Col03`, `Col04`, `Col05`.
+   > **`egg-cli listen` therefore returns nothing on a Windows build**, not
+   > even a battery event after a `0xB4`, and that is a property of the
+   > platform rather than a fault in the device or the tool. Reproducing it
+   > there would need a second handle opened on the `0xFF02`/`0x0001`
+   > collection, exactly as the vendor tool does. **[DEV]**
+
 ---
 
 ## 5. Persistence
