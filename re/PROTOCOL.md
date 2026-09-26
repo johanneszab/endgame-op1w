@@ -622,9 +622,32 @@ would need to act on. Under the layout above it decodes as code `0x31`,
 sub-value `0x14`, short `0x0010`; `0x14` being exactly the command that had
 just been written is suggestive of a write-acknowledgement, but one sample
 cannot distinguish that from a coincidence. The decisive test is cheap: run
-`egg-cli listen` on a v1 and apply a `0x15` change, then a `0x16` change. If
-`03 31 15 …` and `03 31 16 …` follow, it is a per-block acknowledgement; if
-only `0x14` ever produces it, it is about the sensor block specifically.
+`egg-cli listen` on a v1 and apply a `0x15` change, then a `0x16` change.
+
+**That test has now been run, and it rules the acknowledgement out.** One cmd
+`0x14` write (`set cpi`), one `0x15` (`set slamclick`) and one `0x16`
+(`map forward mouse back`), in that order, produced **two** events and both
+were byte-identical to the original sighting: **[DEV]**
+
+```
+03 31 14 10 00 00 00 00
+03 31 14 10 00 00 00 00
+```
+
+No `03 31 15 …`, no `03 31 16 …`. Byte 2 is `0x14` in every sighting to date,
+so if it names a command it names that one specifically — this is not a
+per-block write acknowledgement.
+
+What is still unexplained is the count: each CLI verb writes exactly one block
+(`writeSensor`, `writePower`, `writeButtons` in `cli/main.cpp`), so that run
+contained exactly one `0x14` write and produced two events. Either a single
+sensor write emits the event twice, or something else in the sequence also
+emits it. The original GUI sighting cannot settle it, because the status bar
+shows only the most recent message and two identical events are
+indistinguishable there from one.
+
+Next step is one isolated write per `listen` session, counting events each
+time. Until then, treat both the meaning and the trigger as open.
 
 | Byte | `0xB4` battery event | `0xB1` link event |
 |---|---|---|
