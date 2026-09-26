@@ -69,3 +69,7 @@ Testing/
 
 # JetBrains settings
 .idea/
+
+# Python bytecode (re/tools/*.py)
+__pycache__/
+*.pyc
