@@ -1045,8 +1045,9 @@ void MainWindow::pollEvents()
             // A code no vendor tool acts on. Theirs drop these; this one says
             // so, because an undecoded event is worth knowing about — but it
             // is harmless, and in particular it does not mean the Apply that
-            // may have preceded it failed. At least two exist: a v1 emits 0x31
-            // after a cmd 0x14 write, and 0x30 appears in four captures. See
+            // may have preceded it failed. Expect one: a v1 emits 0x31 after
+            // every cmd 0x14 and cmd 0x15 write, which is to say after the
+            // Basic and Advanced Apply buttons. 0x30 also occurs. See
             // PROTOCOL.md section 4a.
             report(tr("Device event %1, not decoded (harmless): %2")
                        .arg(int(ev->code()), 2, 16, QLatin1Char('0'))

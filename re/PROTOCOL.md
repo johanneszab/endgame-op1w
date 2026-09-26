@@ -638,16 +638,37 @@ No `03 31 15 …`, no `03 31 16 …`. Byte 2 is `0x14` in every sighting to date
 so if it names a command it names that one specifically — this is not a
 per-block write acknowledgement.
 
-What is still unexplained is the count: each CLI verb writes exactly one block
-(`writeSensor`, `writePower`, `writeButtons` in `cli/main.cpp`), so that run
-contained exactly one `0x14` write and produced two events. Either a single
-sensor write emits the event twice, or something else in the sequence also
-emits it. The original GUI sighting cannot settle it, because the status bar
-shows only the most recent message and two identical events are
-indistinguishable there from one.
+Isolating each write in its own `listen` session settles the trigger: **[DEV]**
 
-Next step is one isolated write per `listen` session, counting events each
-time. Until then, treat both the meaning and the trigger as open.
+| write | block | events |
+|---|---|---|
+| `set cpi 1 400` | cmd `0x14` | 1 |
+| `set slamclick on` | cmd `0x15` | 1 |
+| `map forward mouse forward` | cmd `0x16` | 0 |
+
+So the earlier run's two events were one from the `0x14` and one from the
+`0x15`; nothing fires it twice. Two things follow.
+
+**Byte 2 is not the command number.** It is `0x14` even when the write was cmd
+`0x15`. The whole payload is invariant — `14 10 00 00 00 00` in every sighting,
+whichever of the two blocks was written and whatever value changed.
+
+**The trigger is a sensor reconfiguration.** Cmds `0x14` and `0x15` are exactly
+the two blocks that reprogram the sensor — CPI, lift-off, polling rate, motion
+sync, the filters — while `0x16` only rewrites the button table and touches no
+sensor register. The event reads as the mouse announcing that its sensor was
+re-initialised, with a constant payload. That is an inference from the trigger
+set, not a decode: nothing establishes what `14 10` denotes, and because no
+vendor tool has a dispatch arm for `0x31` there is no disassembly to decode it
+against. **[?]**
+
+> **The "v1 only" framing is weaker than it looks, and is worth retesting.**
+> It rests on `0x31` appearing in none of the captures — but only 8 of the 44
+> files contain any packet on the notification endpoint at all, and **none of
+> the 16 files carrying a cmd `0x14` write recorded that endpoint**. So the
+> captures never had the opportunity to show a v2 emitting it. The cheap test
+> is the one above, run against a v2 on Linux; until then "the v2 does not emit
+> `0x31`" is unestablished rather than false.
 
 | Byte | `0xB4` battery event | `0xB1` link event |
 |---|---|---|
