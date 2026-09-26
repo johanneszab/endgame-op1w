@@ -662,13 +662,17 @@ set, not a decode: nothing establishes what `14 10` denotes, and because no
 vendor tool has a dispatch arm for `0x31` there is no disassembly to decode it
 against. **[?]**
 
-> **The "v1 only" framing is weaker than it looks, and is worth retesting.**
-> It rests on `0x31` appearing in none of the captures — but only 8 of the 44
-> files contain any packet on the notification endpoint at all, and **none of
-> the 16 files carrying a cmd `0x14` write recorded that endpoint**. So the
-> captures never had the opportunity to show a v2 emitting it. The cheap test
-> is the one above, run against a v2 on Linux; until then "the v2 does not emit
-> `0x31`" is unestablished rather than false.
+**It is a genuine generational difference.** The same test on a v2 — `listen`
+plus `set cpi 1 600` — produced **no event at all**, while `show` confirmed the
+stage had changed from 400 to 600. So the write landed and the silence is real,
+not an artefact of nothing having been written. **[DEV]**
+
+That upgrades a claim that had been resting on weak ground. The original
+"appears in no capture" evidence was nearly worthless here: only 8 of the 44
+files contain any packet on the notification endpoint, and **none of the 16
+carrying a cmd `0x14` write recorded that endpoint at all**, so the captures
+never had the opportunity to show a v2 emitting it. The direct test replaces an
+absence of evidence with evidence of absence.
 
 | Byte | `0xB4` battery event | `0xB1` link event |
 |---|---|---|
@@ -1075,6 +1079,7 @@ model-specific writes until it can.
 | Flags bit 6 (`0x40`) | unused | force max sensor FPS |
 | cmd `0x14` +5 | never written, stays `0x00` | sensor angle tuning |
 | cmd `0x14` +7 | **written, but ignored by the device** | active CPI stage |
+| Event `0x31` after a `0x14`/`0x15` write | **emitted** | not emitted |
 | CPI range the tool allows | 50–26000, step 50 | **10–30000**, step 10 below 10000 |
 | Lift-off encoding | fixed | **depends on glass mode** — see §4 |
 | cmd `0x15` payload | **10 bytes** written | **11 bytes** written |
@@ -1129,10 +1134,11 @@ bytes, both inactivity timeouts, pairing, factory reset, and the CPI stage LED
 colours (§4).
 
 Two caveats on that list. The **notification channel** is identical in
-transport and framing, but the *event set* is not established as identical:
-the v1 tool dispatches `0x06` and accepts `0xF1` (§4a), and the v2 tool's own
-dispatcher has never been decompiled — only its listener loop. And a v1
-emits `0x31`, which no capture of a v2 contains. The **lift-off option sets**
+transport and framing, but the *event set* is not: a v1 emits `0x31` after
+every `0x14` and `0x15` write and a v2 emits nothing, tested directly on both
+(§4a). **[DEV]** The tools differ too — the v1's dispatches `0x06` and accepts
+`0xF1` (§4a), and the v2 tool's own dispatcher has never been decompiled, only
+its listener loop. The **lift-off option sets**
 and **polling option sets** differ in length and order, so a combo index from
 one generation is meaningless on the other; only the wire values transfer.
 
