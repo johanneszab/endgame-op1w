@@ -48,12 +48,24 @@ struct Notification {
     bool isBattery() const   { return code() == static_cast<uint8_t>(EventCode::Battery); }
     bool isLinkState() const { return code() == static_cast<uint8_t>(EventCode::LinkState); }
 
+    // The mouse reports its polling rate changing on its own. The v1 vendor
+    // tool acts on this; it was never triggered in a capture, so the decode is
+    // from that tool's dispatcher rather than from the wire. [BIN]
+    bool isPollingChanged() const {
+        return code() == static_cast<uint8_t>(EventCode::PollingChanged);
+    }
+    uint8_t pollingModeByte() const { return raw[kEvtBattery]; }   // byte 2
+
     // Battery events.
     uint8_t batteryPercent() const { return raw[kEvtBattery]; }
     uint8_t signalLevel() const    { return raw[kEvtSignal]; }
 
-    // Link-state events. Link-down is the deep-sleep timeout firing.
+    // Link-state events. Link-down is the deep-sleep timeout firing. The v1
+    // tool accepts 0xF1 as a second down code; no capture shows it. [BIN]
     bool linkUp() const { return raw[kEvtLink] == kLinkUp; }
+    bool linkDown() const {
+        return raw[kEvtLink] == kLinkDown || raw[kEvtLink] == kLinkDownAlt;
+    }
 
     std::string toHex() const;
 };
@@ -177,5 +189,18 @@ double  lodIndexToMillimetres(uint8_t index, LodEncoding enc);
 // The lift-off distances a model actually offers, in millimetres and in the
 // order its vendor tool lists them.
 std::vector<double> lodOptions(LodEncoding enc);
+
+// Which scale is in force *right now*. Lift-off is the one setting whose
+// encoding is not a property of the model alone: on a v2, turning sensor glass
+// mode on switches it to whole millimetres. Always resolve the encoding
+// through this rather than reading ModelInfo::lod directly.
+// See PROTOCOL.md section 4, "Glass mode changes the lift-off scale".
+LodEncoding effectiveLodEncoding(const ModelInfo& m, bool glassMode);
+
+// Translate a stored lift-off byte across a glass-mode change, the way the
+// vendor tool does — the scales do not share a meaning, so the byte cannot
+// simply be carried over. `glassNowOn` is the state being switched *into*.
+// A byte that does not map is returned unchanged for the caller to preserve.
+uint8_t lodConvertForGlassMode(uint8_t index, bool glassNowOn);
 
 }  // namespace egg

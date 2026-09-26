@@ -23,15 +23,27 @@ struct CpiStage {
     //
     // No test isolates the byte itself — every observation is equally
     // explained by the device ignoring it and using X and Y directly. That
-    // does not matter as long as the flag is always derived from x != y, which
-    // is what both front-ends do. Don't set it independently of the values.
+    // does not matter as long as the flag is always derived from x != y.
+    //
+    // Records what the device reported, and nothing reads it: encode()
+    // recomputes the flag from x != y, because relying on every caller to keep
+    // the two in step is what let a "Separate X / Y" checkbox set it on a
+    // stage whose axes were equal. Kept so a blob dump can be compared against
+    // the device byte for byte; do not reintroduce a writer.
     uint8_t  xySplit = 0;
 };
 
 struct SensorBlock {
-    uint8_t  unknown0      = 0;      // always 0; preserved
+    // cmd 0x14 +0, from blob 0x07. Undecoded, and 0x00 in every capture — but
+    // read back and rewritten rather than assumed, so a device that holds
+    // something else keeps it. decodeBlob() fills this; before it ran, the
+    // default is the only value ever observed.
+    uint8_t  unknown0      = 0;
     bool     ledOnLiftOff  = true;
-    uint8_t  lodIndex      = 3;      // 0 = 0.7 mm, step 0.1 mm
+    // Raw device byte. The two generations scale it differently, so it has
+    // no meaning until decodeBlob() fills it AND the model is known — hence no
+    // default that would be right for one generation and wrong for the other.
+    uint8_t  lodIndex      = 0;
     bool     angleSnapping = false;
     bool     rippleControl = false;
     int8_t   angleTuning   = 0;      // degrees

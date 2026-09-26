@@ -1,4 +1,5 @@
-// egg-cli — command-line configuration for the Endgame Gear OP1w 4k v2.
+// egg-cli — command-line configuration for the Endgame Gear wireless mice
+// (OP1w 4k and XM2w 4k, both generations).
 //
 // Writes go out as whole blocks, so changing one setting means supplying every
 // other value in that block. Every field can be read back from the device's
@@ -119,20 +120,45 @@ void requireIdentifiedModel(Device& dev, const std::string& setting)
         "cannot be inferred without asking the mouse.)");
 }
 
+// The vendor tools clamp CPI differently per generation — v1 50..26000, v2
+// 10..30000 — so this needs the model. Before it is known, kUnknownModel holds
+// the intersection, which cannot be out of range for either.
+void requireCpiInRange(Device& dev, int x, int y)
+{
+    const ModelInfo& m = dev.model();
+    if (x < m.cpiMin || x > m.cpiMax || y < m.cpiMin || y > m.cpiMax) {
+        char buf[160];
+        std::snprintf(buf, sizeof buf,
+                      "CPI out of range: %s allows %u-%u%s",
+                      dev.modelIdentified() ? m.name : "an unidentified mouse",
+                      m.cpiMin, m.cpiMax,
+                      dev.modelIdentified()
+                          ? ""
+                          : " until cmd 0x0E names it (the v2 allows 10-30000)");
+        die(buf);
+    }
+}
+
 // The two generations put lift-off distance on incompatible scales, so an
 // unidentified mouse gets the raw byte rather than a number that would be
 // wrong on one of them.
-std::string lodText(Device& dev, uint8_t lodIndex)
+std::string lodText(Device& dev, uint8_t lodIndex, bool glassMode)
 {
-    char buf[80];
+    char buf[96];
     if (!dev.modelIdentified()) {
         std::snprintf(buf, sizeof buf,
                       "raw 0x%02X (scale unknown until the mouse is identified)",
                       lodIndex);
         return buf;
     }
-    std::snprintf(buf, sizeof buf, "%.1f mm",
-                  lodIndexToMillimetres(lodIndex, dev.model().lod));
+    // Not ModelInfo::lod: on a v2, glass mode switches the scale.
+    const LodEncoding enc = effectiveLodEncoding(dev.model(), glassMode);
+    // Whole millimetres read "1 mm" / "2 mm"; a decimal would imply a
+    // precision that scale does not have.
+    const bool whole = enc == LodEncoding::Millimetres;
+    std::snprintf(buf, sizeof buf, whole ? "%.0f mm%s" : "%.1f mm%s",
+                  lodIndexToMillimetres(lodIndex, enc),
+                  (whole && dev.model().hasGlassMode) ? " (glass-mode scale)" : "");
     return buf;
 }
 
@@ -185,11 +211,18 @@ void cmdListen(Device& dev)
             if (ev->isBattery()) {
                 std::cout << "battery " << static_cast<int>(ev->batteryPercent())
                           << " %, signal " << static_cast<int>(ev->signalLevel());
-            } else if (ev->isLinkState()) {
+            } else if (ev->isPollingChanged()) {
+                std::cout << "polling rate changed on the mouse: "
+                          << pollingLabel(ev->pollingModeByte());
+            } else if (ev->isLinkState() && (ev->linkUp() || ev->linkDown())) {
                 std::cout << (ev->linkUp() ? "link up (mouse awake)"
                                            : "link down (mouse asleep)");
             } else {
-                std::cout << "unknown event";
+                // A code no vendor tool acts on; theirs drop these too. Both
+                // 0x30 and 0x31 are known to occur. See PROTOCOL.md 4a.
+                std::cout << "event 0x" << std::hex << std::setw(2)
+                          << std::setfill('0') << static_cast<int>(ev->code())
+                          << std::dec << std::setfill(' ') << ", not decoded";
             }
             std::cout << std::endl;
         }
@@ -201,30 +234,51 @@ void cmdShow(Device& dev)
 {
     const DecodedConfig c = currentConfig(dev);
 
+    // The colour is the one the mouse's underside LED shows for that stage; on
+    // the device it is the only way to tell the stages apart. It belongs to the
+    // stage, not to the CPI value. Brackets mark the active stage.
     std::cout << "CPI stages  : ";
     for (size_t i = 0; i < c.sensor.stages.size(); ++i) {
         const auto& s = c.sensor.stages[i];
         if (i == c.sensor.activeStage) std::cout << "[";
         std::cout << s.x;
         if (s.x != s.y) std::cout << "/" << s.y;
+        std::cout << " " << kStageColours[i].name;
         if (i == c.sensor.activeStage) std::cout << "]";
         std::cout << (i + 1 < c.sensor.stages.size() ? ", " : "\n");
     }
 
     std::cout << std::fixed << std::setprecision(1)
               << "CPI levels  : " << static_cast<int>(c.sensor.cpiLevels) << "\n"
-              << "LOD         : " << lodText(dev, c.sensor.lodIndex) << "\n"
+              << "LOD         : " << lodText(dev, c.sensor.lodIndex, c.power.glassMode) << "\n"
               << "Angle snap  : " << (c.sensor.angleSnapping ? "on" : "off") << "\n"
               << "Ripple ctrl : " << (c.sensor.rippleControl ? "on" : "off") << "\n"
-              << "Angle tuning: " << static_cast<int>(c.sensor.angleTuning) << " deg\n"
               << "LED liftoff : " << (c.sensor.ledOnLiftOff ? "on" : "off") << "\n"
               << "Polling     : " << pollingLabel(c.power.pollingMode) << "\n"
               << "Motion sync : " << (c.power.motionSync ? "on" : "off") << "\n"
-              << "Glass mode  : " << (c.power.glassMode ? "on" : "off") << "\n"
-              << "Max sensor  : " << (c.power.forceMaxFps() ? "on" : "off") << "\n"
-              << "MotionJitter: " << (c.power.motionJitter() ? "on" : "off") << "\n"
-              << "Slamclick   : " << (c.power.slamclick() ? "on" : "off") << "\n"
-              << "Multiclick  : " << (c.power.multiclick() ? "on" : "off") << "\n"
+              << "Slamclick   : " << (c.power.slamclick() ? "on" : "off") << "\n";
+
+    // Model-specific fields. On a generation that does not implement one, the
+    // bit or blob byte we would be reading means something unestablished, so
+    // printing a value would be stating something about the device that has
+    // not been established. PROTOCOL.md section 12.
+    const ModelInfo& m = dev.model();
+    const auto showOptional = [&](const char* label, bool supported, const char* value) {
+        std::cout << label << ": "
+                  << (!dev.modelIdentified() ? "? (mouse not identified)"
+                      : !supported           ? "n/a on this model"
+                                             : value)
+                  << "\n";
+    };
+    char tuning[24];
+    std::snprintf(tuning, sizeof tuning, "%d deg", static_cast<int>(c.sensor.angleTuning));
+    showOptional("Angle tuning", m.hasAngleTuning,   tuning);
+    showOptional("Glass mode  ", m.hasGlassMode,     c.power.glassMode     ? "on" : "off");
+    showOptional("Max sensor  ", m.hasForceMaxFps,   c.power.forceMaxFps() ? "on" : "off");
+    showOptional("MotionJitter", m.hasMotionJitter,  c.power.motionJitter()? "on" : "off");
+    showOptional("Multiclick  ", m.hasMulticlickAck, c.power.multiclick()  ? "on" : "off");
+
+    std::cout << std::fixed << std::setprecision(1)
               << "Power saving: " << timeoutText(c.power.powerSavingEnabled,
                                                  c.power.powerSavingMinutes) << "\n"
               << "Deep sleep  : " << timeoutText(c.power.deepSleepEnabled,
@@ -280,18 +334,20 @@ void usage()
         "\n"
         "  set cpi <1-4> <x> [y]         CPI for one stage, in CPI units\n"
         "  set cpi-levels <1-4>          number of active stages\n"
-        "  set active-stage <1-4>        which stage is selected\n"
+        "  set active-stage <1-4>        which stage is selected; v2 models\n"
+        "                                only, the v1 switches it with the\n"
+        "                                button under the mouse\n"
         "  set lod <mm>                  lift-off distance; v1 offers 1 and 2,\n"
-        "                                v2 offers 0.7 - 2.0 in 0.1 steps\n"
+        "                                v2 offers 0.7 - 1.7 in 0.1 steps\n"
         "  set angle-snap <on|off>\n"
         "  set ripple <on|off>\n"
-        "  set angle-tuning <-30..30>    degrees\n"
+        "  set angle-tuning <-30..30>    degrees; v2 models only\n"
         "  set led-liftoff <on|off>\n"
         "  set polling <4000|2000|1000|1000ps|125>\n"
         "                                1000ps = 1000 Hz with wireless power\n"
         "                                saving; 125 = office mode\n"
         "  set motion-sync <on|off>\n"
-        "  set glass-mode <on|off>\n"
+        "  set glass-mode <on|off>       v2 models only\n"
         "  set max-sensor-fps <on|off>   v2 models only\n"
         "  set motion-jitter <on|off>    v1 models only\n"
         "  set slamclick <on|off>\n"
@@ -339,25 +395,32 @@ int doSet(Device& dev, const std::vector<std::string>& args)
             if (stage < 1 || stage > static_cast<int>(kCpiStageCount)) die("stage must be 1-4");
             const int x = parseInt(args[3]);
             const int y = args.size() > 4 ? parseInt(args[4]) : x;
-            if (x < 50 || x > 26000 || y < 50 || y > 26000) die("CPI out of range");
+            requireCpiInRange(dev, x, y);
             cfg.sensor.stages[stage - 1].x = static_cast<uint16_t>(x);
             cfg.sensor.stages[stage - 1].y = static_cast<uint16_t>(y);
-            // Set only when the caller actually passed a Y value.
-            if (args.size() > 4) {
-                cfg.sensor.stages[stage - 1].xySplit = (x == y) ? 0 : 1;
-            }
+            // No xySplit to set: SensorBlock::encode derives it from x != y.
         } else if (key == "cpi-levels") {
             const int n = parseInt(args[2]);
             if (n < 1 || n > static_cast<int>(kCpiStageCount)) die("cpi-levels must be 1-4");
             cfg.sensor.cpiLevels = static_cast<uint8_t>(n);
         } else if (key == "active-stage") {
+            requireIdentifiedModel(dev, "active-stage");
+            if (!dev.model().hasCpiStageSelect) {
+                die(std::string("the ") + dev.model().name +
+                    " ignores the active-stage field — switch stages with the "
+                    "button underneath the mouse. Its own vendor tool has no "
+                    "control for this either. (egg show prints the stage the "
+                    "mouse is on, and the LED colour that goes with it.)");
+            }
             const int n = parseInt(args[2]);
             if (n < 1 || n > static_cast<int>(kCpiStageCount)) die("active-stage must be 1-4");
             cfg.sensor.activeStage = static_cast<uint8_t>(n - 1);
         } else if (key == "lod") {
             requireIdentifiedModel(dev, "lod");
-            const double mm   = parseDouble(args[2]);
-            const auto   opts = lodOptions(dev.model().lod);
+            const double mm  = parseDouble(args[2]);
+            const LodEncoding enc =
+                effectiveLodEncoding(dev.model(), cfg.power.glassMode);
+            const auto   opts = lodOptions(enc);
 
             // Snap to the nearest distance this model offers rather than
             // demanding an exact hit, but refuse anything outside its range —
@@ -368,7 +431,11 @@ int doSet(Device& dev, const std::vector<std::string>& args)
                 std::snprintf(lo, sizeof lo, "%.1f", opts.front());
                 std::snprintf(hi, sizeof hi, "%.1f", opts.back());
                 die(std::string("lod must be between ") + lo + " and " + hi
-                    + " mm on " + dev.model().name);
+                    + " mm on " + dev.model().name
+                    + (cfg.power.glassMode
+                           ? " with sensor glass mode on (it selects the"
+                             " whole-millimetre scale)"
+                           : ""));
             }
             double nearest = opts.front();
             for (double o : opts) {
@@ -380,7 +447,7 @@ int doSet(Device& dev, const std::vector<std::string>& args)
                 std::printf("note: %s offers %.1f mm, not %.1f — using %.1f\n",
                             dev.model().name, nearest, mm, nearest);
             }
-            cfg.sensor.lodIndex = lodMillimetresToIndex(nearest, dev.model().lod);
+            cfg.sensor.lodIndex = lodMillimetresToIndex(nearest, enc);
         } else if (key == "angle-snap") {
             cfg.sensor.angleSnapping = parseBool(args[2]);
         } else if (key == "ripple") {
@@ -411,6 +478,12 @@ int doSet(Device& dev, const std::vector<std::string>& args)
     }
 
     // ---- power block ----
+    //
+    // Glass mode is the one key here that also moves a cmd 0x14 field: it
+    // selects the lift-off scale, so the stored byte has to be translated and
+    // written with it. Everything else below touches the 0x15 block alone.
+    bool alsoWriteSensor = false;
+
     if (key == "polling") {
         requireIdentifiedModel(dev, "polling");
         const std::string& v = args[2];
@@ -438,7 +511,25 @@ int doSet(Device& dev, const std::vector<std::string>& args)
         if (!dev.model().hasGlassMode) {
             die(std::string("glass mode is not available on ") + dev.model().name);
         }
-        cfg.power.glassMode = parseBool(args[2]);
+        const bool on = parseBool(args[2]);
+        if (on != cfg.power.glassMode) {
+            // Glass mode selects the lift-off scale, so the stored byte has to
+            // be translated with it or it would mean something else afterwards.
+            // PROTOCOL.md section 4. The 0x14 block carries that byte, so this
+            // key has to write it too -- see alsoWriteSensor.
+            const uint8_t before = cfg.sensor.lodIndex;
+            cfg.sensor.lodIndex  = lodConvertForGlassMode(before, on);
+            if (cfg.sensor.lodIndex != before) {
+                std::printf("note: glass mode %s changes the lift-off scale; "
+                            "0x%02X -> 0x%02X (%s)\n",
+                            on ? "on" : "off", before, cfg.sensor.lodIndex,
+                            lodText(dev, cfg.sensor.lodIndex, on).c_str());
+            }
+            // Write it even when the byte did not move: the scale changed, so
+            // restating it keeps the pair consistent on the device.
+            alsoWriteSensor = true;
+        }
+        cfg.power.glassMode = on;
     } else if (key == "max-sensor-fps") {
         requireIdentifiedModel(dev, key);
         if (!dev.model().hasForceMaxFps) {
@@ -498,7 +589,12 @@ int doSet(Device& dev, const std::vector<std::string>& args)
         die("unknown setting " + key + " (try --help)");
     }
 
+    // Same order the GUI uses, so both front-ends leave the device in the same
+    // state if one of the two writes fails.
     writePower(dev, cfg.power);
+    if (alsoWriteSensor) {
+        writeSensor(dev, cfg.sensor);
+    }
     std::cout << key << " updated\n";
     return 0;
 }
@@ -527,7 +623,7 @@ int doMap(Device& dev, const std::vector<std::string>& args)
         if (args.size() < 4) die("map <button> cpi <x> [y]");
         const int x = parseInt(args[3]);
         const int y = args.size() > 4 ? parseInt(args[4]) : x;
-        if (x < 50 || x > 26000 || y < 50 || y > 26000) die("CPI out of range");
+        requireCpiInRange(dev, x, y);
         e.setFixedCpi(static_cast<uint16_t>(x), static_cast<uint16_t>(y));
     } else if (kind == "mouse") {
         if (args.size() < 4) die("map <button> mouse <left|right|middle|back|forward>");

@@ -53,7 +53,13 @@ void SensorBlock::encode(uint8_t out[kSensorPayload]) const
 
     for (size_t i = 0; i < stages.size(); ++i) {
         uint8_t* rec = out + 8 + i * 5;
-        rec[0] = stages[i].xySplit;
+        // Derived, never taken from the caller. PROTOCOL.md section 8 item 3a:
+        // no test so far isolates whether the device honours this flag or just
+        // uses X and Y, and the two readings only ever agree while the flag
+        // matches x != y. Keeping that true per stage is what makes this tool
+        // correct under either reading — so a UI checkbox must not be able to
+        // set it for a stage whose axes are equal.
+        rec[0] = (stages[i].x != stages[i].y) ? 1 : 0;
         put16(rec + 1, stages[i].x);
         put16(rec + 3, stages[i].y);
     }
@@ -328,6 +334,7 @@ DecodedConfig decodeBlob(const std::array<uint8_t, kBlobSize>& b)
 {
     DecodedConfig c;
 
+    c.sensor.unknown0      = b[blob::kUnknown0];
     c.sensor.ledOnLiftOff  = b[blob::kLedOnLiftOff] != 0;
     c.sensor.lodIndex      = b[blob::kLod];
     c.sensor.angleSnapping = b[blob::kAngleSnapping] != 0;

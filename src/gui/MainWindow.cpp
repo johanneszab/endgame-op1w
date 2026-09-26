@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <iterator>   // std::size
 
 using namespace egg;
@@ -73,13 +74,42 @@ int indexOfAction(const ButtonEntry& e)
     return -1;   // something we do not offer, e.g. a keyboard or fixed-CPI binding
 }
 
+// The swatch doubles as the active-stage marker. It has to, for the v1: there
+// the stage buttons are disabled, and a disabled checked button is too faint to
+// read in several styles.
+void applySwatchStyle(QLabel* swatch, size_t stage, bool active)
+{
+    const StageColour& c = kStageColours[stage];
+    swatch->setStyleSheet(
+        QStringLiteral("background-color: rgb(%1, %2, %3); border: %4px solid %5;")
+            .arg(int(c.r))
+            .arg(int(c.g))
+            .arg(int(c.b))
+            .arg(active ? 3 : 1)
+            .arg(active ? QStringLiteral("palette(highlight)")
+                        : QStringLiteral("palette(mid)")));
+}
+
+// Named separately from kStageColours so the word is translatable; the RGB
+// values stay in one place, in protocol.h.
+QString stageColourName(size_t stage)
+{
+    switch (stage) {
+    case 0:  return QObject::tr("blue");
+    case 1:  return QObject::tr("green");
+    case 2:  return QObject::tr("yellow");
+    default: return QObject::tr("red");
+    }
+}
+
 }  // namespace
 
 MainWindow::MainWindow()
 {
-    // Neutral until the mouse names itself; repopulateForModel() replaces this
-    // with the actual model. Hardcoding a model here would mislabel the other.
-    setWindowTitle(tr("Endgame Gear"));
+    // Empty until the mouse names itself, so the window shows the application
+    // display name alone; repopulateForModel() fills in the model. Hardcoding a
+    // model here would mislabel the other one.
+    setWindowTitle(QString());
 
     auto* central = new QWidget;
     auto* layout  = new QVBoxLayout(central);
@@ -204,19 +234,34 @@ QWidget* MainWindow::buildBasicTab()
     auto* cpiBox  = new QGroupBox(tr("CPI stages"));
     auto* cpiGrid = new QGridLayout(cpiBox);
     for (int i = 0; i < static_cast<int>(kCpiStageCount); ++i) {
+        // The colour the mouse's underside LED shows for this stage. It is the
+        // only way to tell the stages apart on the device itself, and on the v1
+        // it is the only way to tell which one is active at all — see
+        // repopulateForModel().
+        stageSwatch_[i] = new QLabel;
+        stageSwatch_[i]->setFixedSize(16, 16);
+        applySwatchStyle(stageSwatch_[i], static_cast<size_t>(i), false);
+        stageSwatch_[i]->setToolTip(
+            tr("The LED under the mouse glows %1 while CPI %2 is the active "
+               "stage. The colour belongs to the stage, not to its CPI value.")
+                .arg(stageColourName(static_cast<size_t>(i)))
+                .arg(i + 1));
+
         stageButton_[i] = new QPushButton(tr("CPI %1").arg(i + 1));
         stageButton_[i]->setCheckable(true);
         stageButton_[i]->setAutoExclusive(true);
         stageButton_[i]->setToolTip(tr("Make this the active stage"));
 
         cpiX_[i] = new QSpinBox;
-        cpiX_[i]->setRange(50, 26000);
-        cpiX_[i]->setSingleStep(50);
+        // Real limits are per model and applied by repopulateForModel(); this
+        // is just a safe starting range before the mouse has named itself.
+        cpiX_[i]->setRange(kUnknownModel.cpiMin, kUnknownModel.cpiMax);
+        cpiX_[i]->setSingleStep(kUnknownModel.cpiStep);
         cpiX_[i]->setSuffix(tr(" CPI"));
 
         cpiY_[i] = new QSpinBox;
-        cpiY_[i]->setRange(50, 26000);
-        cpiY_[i]->setSingleStep(50);
+        cpiY_[i]->setRange(kUnknownModel.cpiMin, kUnknownModel.cpiMax);
+        cpiY_[i]->setSingleStep(kUnknownModel.cpiStep);
         cpiY_[i]->setSuffix(tr(" CPI"));
 
         // With split X/Y off, Y follows X.
@@ -226,12 +271,19 @@ QWidget* MainWindow::buildBasicTab()
             }
         });
 
-        cpiGrid->addWidget(stageButton_[i],      i, 0);
-        cpiGrid->addWidget(new QLabel(tr("X:")), i, 1);
-        cpiGrid->addWidget(cpiX_[i],             i, 2);
-        cpiGrid->addWidget(new QLabel(tr("Y:")), i, 3);
-        cpiGrid->addWidget(cpiY_[i],             i, 4);
+        cpiGrid->addWidget(stageSwatch_[i],      i, 0);
+        cpiGrid->addWidget(stageButton_[i],      i, 1);
+        cpiGrid->addWidget(new QLabel(tr("X:")), i, 2);
+        cpiGrid->addWidget(cpiX_[i],             i, 3);
+        cpiGrid->addWidget(new QLabel(tr("Y:")), i, 4);
+        cpiGrid->addWidget(cpiY_[i],             i, 5);
     }
+
+    // Filled in by repopulateForModel(); only the v1 generation needs it.
+    cpiStageHint_ = new QLabel;
+    cpiStageHint_->setWordWrap(true);
+    cpiStageHint_->setVisible(false);
+    cpiGrid->addWidget(cpiStageHint_, static_cast<int>(kCpiStageCount), 0, 1, 6);
     connect(splitXYBox_, &QCheckBox::toggled, this, [this](bool on) {
         for (int i = 0; i < static_cast<int>(kCpiStageCount); ++i) {
             cpiY_[i]->setEnabled(on);
@@ -273,6 +325,28 @@ QWidget* MainWindow::buildAdvancedTab()
     motionSyncBox_   = new QCheckBox(tr("Motion sync"));
     forceMaxFpsBox_  = new QCheckBox(tr("Force max sensor FPS"));
     glassModeBox_    = new QCheckBox(tr("Sensor glass mode"));
+    // Glass mode also selects which lift-off scale is in force, so moving it
+    // has to rebuild that list and translate the stored byte — the two scales
+    // do not share a meaning, and carrying the byte over unchanged would mean
+    // writing a tenths value to a mouse in glass mode. This mirrors the vendor
+    // tool exactly. See PROTOCOL.md section 4.
+    connect(glassModeBox_, &QCheckBox::toggled, this, [this](bool on) {
+        if (populating_ || !device_.model().hasGlassMode) {
+            return;
+        }
+        // Display only — config_ is NOT touched here. It keeps the values the
+        // blob actually holds until an Apply commits them, so a power write
+        // that fails cannot leave a converted lift-off byte staged against the
+        // old glass bit, waiting for the next Basic-tab Apply to write it.
+        const uint8_t shown = lodConvertForGlassMode(config_.sensor.lodIndex, on);
+        rebuildLodList(on);
+        selectOrAdd(lodBox_, shown,
+                    tr("0x%1 (not offered in this mode)")
+                        .arg(int(shown), 2, 16, QLatin1Char('0')));
+        report(tr("Glass mode changes the lift-off scale; it becomes %1. "
+                  "Either Apply writes both settings together.")
+                   .arg(lodBox_->currentText()));
+    });
     motionJitterBox_ = new QCheckBox(tr("Motion jitter filter"));
     motionJitterBox_->setToolTip(
         tr("Present on the v1 generation only. The v2 models replaced it with "
@@ -413,6 +487,7 @@ void MainWindow::reload()
         return;
     }
     config_ = decodeBlob(blob);
+    lastReadGlassMode_ = config_.power.glassMode;
 
     repopulateForModel();
     refreshInfo();
@@ -437,8 +512,11 @@ void MainWindow::populate()
     // round-trip: dropping to index 0 would rewrite it on the next Apply, and
     // an unmatched findData() would leave the box blank and harvest 0.
     selectOrAdd(lodBox_, config_.sensor.lodIndex,
-                tr("0x%1 (not offered by this model)")
-                    .arg(config_.sensor.lodIndex, 2, 16, QLatin1Char('0')));
+                device_.modelIdentified()
+                    ? tr("0x%1 (not offered by this model)")
+                          .arg(int(config_.sensor.lodIndex), 2, 16, QLatin1Char('0'))
+                    : tr("raw 0x%1 — scale unknown until the mouse is identified")
+                          .arg(int(config_.sensor.lodIndex), 2, 16, QLatin1Char('0')));
     selectOrAdd(cpiLevelsBox_, config_.sensor.cpiLevels,
                 tr("%1 (unexpected)").arg(config_.sensor.cpiLevels));
     angleSnapBox_->setChecked(config_.sensor.angleSnapping);
@@ -452,13 +530,29 @@ void MainWindow::populate()
         }
     }
     splitXYBox_->setChecked(split);
+    // The generations allow different CPI ranges — v1 50-26000 step 50, v2
+    // 10-30000 step 10 — and while the model is unknown this is kUnknownModel's
+    // intersection of the two. Widen around whatever the device actually holds
+    // before setValue(), or a value outside the range would be silently clamped
+    // and then written back clamped on the next Apply. Same rule as the combos.
+    const ModelInfo& model = device_.model();
     for (int i = 0; i < static_cast<int>(kCpiStageCount); ++i) {
-        cpiX_[i]->setValue(config_.sensor.stages[i].x);
-        cpiY_[i]->setValue(config_.sensor.stages[i].y);
+        const int x = config_.sensor.stages[i].x;
+        const int y = config_.sensor.stages[i].y;
+        cpiX_[i]->setRange(std::min<int>(model.cpiMin, x), std::max<int>(model.cpiMax, x));
+        cpiY_[i]->setRange(std::min<int>(model.cpiMin, y), std::max<int>(model.cpiMax, y));
+        cpiX_[i]->setSingleStep(model.cpiStep);
+        cpiY_[i]->setSingleStep(model.cpiStep);
+        cpiX_[i]->setValue(x);
+        cpiY_[i]->setValue(y);
         cpiY_[i]->setEnabled(split);
     }
     if (config_.sensor.activeStage < kCpiStageCount) {
         stageButton_[config_.sensor.activeStage]->setChecked(true);
+    }
+    for (size_t i = 0; i < kCpiStageCount; ++i) {
+        applySwatchStyle(stageSwatch_[i], i,
+                         i == static_cast<size_t>(config_.sensor.activeStage));
     }
 
     // Same reasoning: a v2 sitting at 0x80 must not be silently rewritten to
@@ -467,7 +561,17 @@ void MainWindow::populate()
                 tr("%1 (not offered by this model)")
                     .arg(QString::fromUtf8(pollingLabel(config_.power.pollingMode))));
 
-    angleTuningBox_->setValue(config_.sensor.angleTuning);
+    // Same round-trip rule as the combos, applied to a spin box: the vendor
+    // offers ±30, but the field is a signed byte, and setValue() on a value
+    // outside the range would silently clamp it and write the clamped number
+    // back on the next Apply. Widen only as far as the device actually needs.
+    // On a model without the field, writeSensorBlock() sends payload +5 as 0
+    // (matching the v1 vendor tool, whose serializer has no store for it), so
+    // show 0 rather than a number from a blob byte that means something else
+    // there and that Apply is about to destroy.
+    const int tuning = device_.model().hasAngleTuning ? config_.sensor.angleTuning : 0;
+    angleTuningBox_->setRange(std::min(-30, tuning), std::max(30, tuning));
+    angleTuningBox_->setValue(tuning);
     motionSyncBox_->setChecked(config_.power.motionSync);
     glassModeBox_->setChecked(config_.power.glassMode);
     forceMaxFpsBox_->setChecked(config_.power.forceMaxFps());
@@ -482,9 +586,14 @@ void MainWindow::populate()
     deepSleepMin_->setValue(config_.power.deepSleepMinutes);
     deepSleepMin_->setEnabled(config_.power.deepSleepEnabled);
 
+    // Same round-trip rule as every other combo here: a value the list does not
+    // offer must be kept, not quietly replaced. Falling back to a fixed index
+    // rewrote it to 8 ms on the next Apply — and syncFilters() would then push
+    // that 8 into the button's 0x16 record too, so the loss was permanent.
     for (int i = 0; i < static_cast<int>(kFilterButtonCount); ++i) {
-        const int found = buttonFilter_[i]->findData(config_.power.buttonFilter[i]);
-        buttonFilter_[i]->setCurrentIndex(found >= 0 ? found : 7);   // fall back to 8 ms
+        selectOrAdd(buttonFilter_[i], config_.power.buttonFilter[i],
+                    tr("0x%1 (unexpected)")
+                        .arg(int(config_.power.buttonFilter[i]), 2, 16, QLatin1Char('0')));
     }
 
     leftHandedBox_->setChecked(config_.buttons.isLeftHanded());
@@ -522,14 +631,17 @@ void MainWindow::harvestSensor()
     config_.sensor.ledOnLiftOff  = ledLiftOffBox_->isChecked();
     config_.sensor.angleTuning   = static_cast<int8_t>(angleTuningBox_->value());
 
-    const bool split = splitXYBox_->isChecked();
+    // The "Separate X / Y" checkbox drives nothing but the Y spin boxes: the
+    // per-stage xySplit flag is derived from x != y inside SensorBlock::encode,
+    // so there is nothing to harvest for it here.
     for (int i = 0; i < static_cast<int>(kCpiStageCount); ++i) {
         config_.sensor.stages[i].x = static_cast<uint16_t>(cpiX_[i]->value());
         config_.sensor.stages[i].y = static_cast<uint16_t>(cpiY_[i]->value());
-        // Written only when the user asks for separate axes, so a stage that
-        // was combined stays combined.
-        config_.sensor.stages[i].xySplit = split ? 1 : 0;
-        if (stageButton_[i]->isChecked()) {
+        // Only on a model that implements the field. Writes are whole-block, so
+        // there is no way to omit payload +7; leaving config_ untouched sends
+        // back exactly the byte the blob read, which is what the v1 vendor tool
+        // does too. See ModelInfo::hasCpiStageSelect.
+        if (device_.model().hasCpiStageSelect && stageButton_[i]->isChecked()) {
             config_.sensor.activeStage = static_cast<uint8_t>(i);
         }
     }
@@ -595,7 +707,23 @@ void MainWindow::applySensor()
     config_.sensor.encode(buf);
 
     setBusy(true);
-    const bool ok = device_.writeSensorBlock(buf);
+    bool ok = device_.writeSensorBlock(buf);
+
+    // The lift-off byte just written is on the scale the glass checkbox shows.
+    // If that checkbox has moved since the blob was read, the device still has
+    // the old glass bit, so the pair would be split down the middle. Write the
+    // power block too — only the glass bit comes from the widgets, the rest of
+    // the block is config_ as read, so this cannot commit unapplied edits from
+    // the Advanced tab.
+    if (ok && glassPending()) {
+        config_.power.glassMode = glassModeBox_->isChecked();
+        uint8_t powerBuf[kPowerPayload];
+        config_.power.encode(powerBuf);
+        ok = device_.writePowerBlock(powerBuf);
+        if (ok) {
+            lastReadGlassMode_ = config_.power.glassMode;
+        }
+    }
     setBusy(false);
 
     report(ok ? tr("Sensor settings applied.")
@@ -609,10 +737,47 @@ void MainWindow::applyPower()
     config_.power.encode(buf);
 
     setBusy(true);
-    const bool ok = device_.writePowerBlock(buf);
+    bool ok = device_.writePowerBlock(buf);
+
+    // Sensor angle tuning sits on this tab because that is where the vendor
+    // tool puts it — but it is a cmd 0x14 field, so this Apply has to write
+    // that block too or the spinbox would silently do nothing. Only that one
+    // value is taken from the widgets; the rest of the block comes from
+    // config_ as it was read, so applying here cannot quietly commit
+    // unapplied Basic-tab edits. v1 models do not have the field at all.
+    // The two blocks are coupled only when glass mode has actually MOVED: the
+    // glass bit in 0x15 decides what the lift-off byte in 0x14 means. Writing
+    // 0x14 on every Advanced-tab Apply would restate the active CPI stage and
+    // the four CPI records from a possibly stale config_, silently reverting a
+    // stage the user had changed with the button under the mouse.
+    bool needSensor = false;
+    if (glassPending()) {
+        // Take the byte the user has been shown, which is what rebuildLodList()
+        // and the toggle handler put in the combo.
+        config_.sensor.lodIndex = static_cast<uint8_t>(lodBox_->currentData().toInt());
+        needSensor = true;
+    }
+
+    if (device_.model().hasAngleTuning) {
+        const auto tuning = static_cast<int8_t>(angleTuningBox_->value());
+        if (tuning != config_.sensor.angleTuning) {
+            config_.sensor.angleTuning = tuning;
+            needSensor = true;
+        }
+    }
+
+    // Only angle tuning and the converted lift-off byte come from this tab;
+    // everything else in the block is config_ as loaded, so applying here
+    // cannot quietly commit unapplied Basic-tab edits.
+    if (ok && needSensor) {
+        uint8_t sensorBuf[kSensorPayload];
+        config_.sensor.encode(sensorBuf);
+        ok = device_.writeSensorBlock(sensorBuf);
+    }
     setBusy(false);
 
     if (ok) {
+        lastReadGlassMode_ = config_.power.glassMode;
         // The filter values also live in the button records.
         syncFilters(config_.power, config_.buttons);
     }
@@ -672,7 +837,8 @@ void MainWindow::promptFixedCpi(int buttonIndex)
     bool ok = false;
     const int x = QInputDialog::getInt(
         this, tr("Fixed CPI"), tr("%1 — CPI (X):").arg(buttonName(buttonIndex)),
-        curX, 50, 26000, 50, &ok);
+        curX, device_.model().cpiMin, device_.model().cpiMax,
+        device_.model().cpiStep, &ok);
     if (!ok) {
         populate();   // restore the combo to what the device actually has
         return;
@@ -682,7 +848,8 @@ void MainWindow::promptFixedCpi(int buttonIndex)
     if (splitXYBox_->isChecked()) {
         y = QInputDialog::getInt(
             this, tr("Fixed CPI"), tr("%1 — CPI (Y):").arg(buttonName(buttonIndex)),
-            curY, 50, 26000, 50, &ok);
+            curY, device_.model().cpiMin, device_.model().cpiMax,
+            device_.model().cpiStep, &ok);
         if (!ok) {
             populate();
             return;
@@ -695,24 +862,58 @@ void MainWindow::promptFixedCpi(int buttonIndex)
                .arg(buttonName(buttonIndex), QString::fromStdString(e.describe())));
 }
 
+// The lift-off list depends on the model AND on sensor glass mode, so it is
+// rebuilt both on reload and whenever that checkbox moves.
+bool MainWindow::glassPending() const
+{
+    return device_.model().hasGlassMode &&
+           glassModeBox_->isChecked() != lastReadGlassMode_;
+}
+
+void MainWindow::rebuildLodList(bool glassMode)
+{
+    const ModelInfo& m = device_.model();
+
+    lodBox_->clear();
+    if (!device_.modelIdentified()) {
+        // kUnknownModel carries the v2 encoding as a placeholder, and building
+        // the list from it would render a sleeping v1's byte 1 as "0.8 mm" — a
+        // wrong number, confidently displayed. The CLI prints the raw byte
+        // here; do the same rather than disagree with it. populate() fills in
+        // the raw byte through selectOrAdd(), and the box is disabled.
+        return;
+    }
+
+    // Passed in, never read off the checkbox here: repopulateForModel() runs
+    // before populate(), so at that point the widget still holds the previous
+    // device's state.
+    const LodEncoding enc = effectiveLodEncoding(m, glassMode);
+
+    // Whole millimetres are labelled "1 mm" / "2 mm": a decimal would imply a
+    // precision that scale does not have, and the vendor writes "1mm" too.
+    const int decimals = (enc == LodEncoding::Millimetres) ? 0 : 1;
+    for (double mm : lodOptions(enc)) {
+        lodBox_->addItem(QString::number(mm, 'f', decimals) + tr(" mm"),
+                         lodMillimetresToIndex(mm, enc));
+    }
+}
+
 void MainWindow::repopulateForModel()
 {
     const ModelInfo& m = device_.model();
     const bool known = device_.modelIdentified();
 
+    // Qt renders this as "<title> — Endgame Gear" (the application display
+    // name), so this half carries only the model.
     setWindowTitle(known ? QString::fromUtf8(m.name)
-                         : tr("Endgame Gear — mouse not identified"));
+                         : tr("Mouse not identified"));
 
     // Lift-off distance: v1 offers 1 and 2 mm; v2 offers 0.7–2.0 mm in 0.1 mm
     // steps, and the byte means different things on each. Rebuild rather than
     // filter, and do not try to carry the old selection across — the rows mean
     // something different afterwards. populate() sets the selection from the
     // device immediately after.
-    lodBox_->clear();
-    for (double mm : lodOptions(m.lod)) {
-        lodBox_->addItem(QString::number(mm, 'f', 1) + tr(" mm"),
-                         lodMillimetresToIndex(mm, m.lod));
-    }
+    rebuildLodList(config_.power.glassMode);
 
     pollingBox_->clear();
     for (const auto& o : pollingOptions(m)) {
@@ -720,11 +921,44 @@ void MainWindow::repopulateForModel()
                              static_cast<int>(static_cast<uint8_t>(o.mode)));
     }
 
-    angleTuningBox_->setEnabled(m.hasAngleTuning);
-    glassModeBox_->setEnabled(m.hasGlassMode);
-    forceMaxFpsBox_->setEnabled(m.hasForceMaxFps);
-    multiclickBox_->setEnabled(m.hasMulticlickAck);
-    motionJitterBox_->setEnabled(m.hasMotionJitter);
+    // The v1 firmware ignores cmd 0x14 +7, so offering the buttons would be a
+    // lie — the user clicks, applies, and nothing moves. Its own vendor tool
+    // has no such control either. The swatches still show which stage is
+    // active, which is the part that was actually missing.
+    const bool canSelectStage = known && m.hasCpiStageSelect;
+    const QString stageTip =
+        canSelectStage ? tr("Make this the active stage")
+      : known          ? tr("This model does not switch stages from software.")
+                       : tr("Waiting for the mouse to say which model it is.");
+    for (auto* b : stageButton_) {
+        b->setEnabled(canSelectStage);
+        b->setToolTip(stageTip);
+    }
+    cpiStageHint_->setVisible(known && !m.hasCpiStageSelect);
+    cpiStageHint_->setText(
+        tr("This model switches CPI stages with the button underneath the "
+           "mouse, not from software. The highlighted swatch is the stage the "
+           "mouse is on now; its colour is what the LED shows.\n"
+           "Any button can be given the same job: Button Mapping → CPI cycle."));
+
+    // A greyed control with no explanation is indistinguishable from one that
+    // has simply not loaded yet, so say which it is. The tooltip each control
+    // was built with is kept and restored when the model does support it.
+    const auto gate = [&](QWidget* w, bool supported) {
+        if (!w->property("baseTip").isValid()) {
+            w->setProperty("baseTip", w->toolTip());
+        }
+        w->setEnabled(known && supported);
+        w->setToolTip(
+            !known       ? tr("Waiting for the mouse to say which model it is.")
+          : !supported   ? tr("Not present on the %1.").arg(QString::fromUtf8(m.name))
+                         : w->property("baseTip").toString());
+    };
+    gate(angleTuningBox_,  m.hasAngleTuning);
+    gate(glassModeBox_,    m.hasGlassMode);
+    gate(forceMaxFpsBox_,  m.hasForceMaxFps);
+    gate(multiclickBox_,   m.hasMulticlickAck);
+    gate(motionJitterBox_, m.hasMotionJitter);
 
     // Until cmd 0x0E names the mouse we do not know which lift-off scale or
     // polling set applies. The device layer refuses those writes outright;
@@ -774,7 +1008,24 @@ void MainWindow::pollEvents()
             signalLabel_->setText(QString::number(ev->signalLevel()));
             connectionLabel_->setText(device_.info().wired ? tr("Wired") : tr("Wireless"));
             mouseFwLabel_->setEnabled(true);
-        } else if (ev->isLinkState()) {
+        } else if (ev->isPollingChanged()) {
+            // The mouse can change its own polling rate; the v1 vendor tool
+            // follows this event into its combo box. Accept only a value this
+            // model offers, so a misread cannot leave a wrong byte staged for
+            // the next Apply.
+            const int mode  = ev->pollingModeByte();
+            const int index = pollingBox_->findData(mode);
+            if (index >= 0) {
+                config_.power.pollingMode = static_cast<uint8_t>(mode);
+                pollingBox_->setCurrentIndex(index);
+                report(tr("Polling rate changed on the mouse: %1.")
+                           .arg(QString::fromUtf8(
+                               pollingLabel(config_.power.pollingMode))));
+            } else {
+                report(tr("Device reported a polling rate this model does not "
+                          "list: %1").arg(QString::fromStdString(ev->toHex())));
+            }
+        } else if (ev->isLinkState() && (ev->linkUp() || ev->linkDown())) {
             if (ev->linkUp()) {
                 report(tr("Mouse woke up."));
                 // If it was asleep at startup we could not identify it. Now we
@@ -791,8 +1042,14 @@ void MainWindow::pollEvents()
                 report(tr("Mouse went to sleep."));
             }
         } else {
-            // Unrecognised event code; surface it rather than swallowing it.
-            report(tr("Unknown device event: %1")
+            // A code no vendor tool acts on. Theirs drop these; this one says
+            // so, because an undecoded event is worth knowing about — but it
+            // is harmless, and in particular it does not mean the Apply that
+            // may have preceded it failed. At least two exist: a v1 emits 0x31
+            // after a cmd 0x14 write, and 0x30 appears in four captures. See
+            // PROTOCOL.md section 4a.
+            report(tr("Device event %1, not decoded (harmless): %2")
+                       .arg(int(ev->code()), 2, 16, QLatin1Char('0'))
                        .arg(QString::fromStdString(ev->toHex())));
         }
     }

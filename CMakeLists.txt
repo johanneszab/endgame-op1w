@@ -10,9 +10,20 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(PkgConfig REQUIRED)
-# The hidraw backend, not libusb: hidraw coexists with the kernel's usbhid
-# driver, so the mouse keeps working while we talk to it.
-pkg_check_modules(HIDAPI REQUIRED IMPORTED_TARGET hidapi-hidraw)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # The hidraw backend, not libusb: hidraw coexists with the kernel's usbhid
+    # driver, so the mouse keeps working while we talk to it. This is not a
+    # preference — do not relax it to plain "hidapi" here, which can resolve to
+    # hidapi-libusb and detach the kernel driver.
+    pkg_check_modules(HIDAPI REQUIRED IMPORTED_TARGET hidapi-hidraw)
+else()
+    # Elsewhere (MSYS2/mingw, macOS) there is one backend and it is named
+    # plainly. Building off Linux is only ever a compile check: device
+    # enumeration differs — Windows exposes one path per HID collection where
+    # Linux exposes one node per interface (see re/PROTOCOL.md section 7) — so
+    # runtime behaviour there says nothing about the Linux path.
+    pkg_check_modules(HIDAPI REQUIRED IMPORTED_TARGET hidapi)
+endif()
 
 # ---------------------------------------------------------------- library ---
 
@@ -22,13 +33,18 @@ add_library(egg STATIC
 )
 target_include_directories(egg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(egg PUBLIC PkgConfig::HIDAPI)
-target_compile_options(egg PRIVATE -Wall -Wextra)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(EGG_WARNINGS -Wall -Wextra)
+else()
+    set(EGG_WARNINGS /W4)
+endif()
+target_compile_options(egg PRIVATE ${EGG_WARNINGS})
 
 # -------------------------------------------------------------------- cli ---
 
 add_executable(egg-cli src/cli/main.cpp)
 target_link_libraries(egg-cli PRIVATE egg)
-target_compile_options(egg-cli PRIVATE -Wall -Wextra)
+target_compile_options(egg-cli PRIVATE ${EGG_WARNINGS})
 
 # -------------------------------------------------------------------- gui ---
 
@@ -40,7 +56,7 @@ if(Qt6_FOUND)
         src/gui/MainWindow.cpp
     )
     target_link_libraries(egg-gui PRIVATE egg Qt6::Widgets)
-    target_compile_options(egg-gui PRIVATE -Wall -Wextra)
+    target_compile_options(egg-gui PRIVATE ${EGG_WARNINGS})
     install(TARGETS egg-gui RUNTIME DESTINATION bin)
 else()
     message(STATUS "Qt6 Widgets not found - building egg-cli only")

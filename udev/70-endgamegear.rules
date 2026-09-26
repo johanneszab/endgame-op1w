@@ -1,4 +1,4 @@
-# Endgame Gear OP1w 4k v2 — let the logged-in user talk to the configuration
+# Endgame Gear wireless mice — let the logged-in user talk to the configuration
 # collection via hidraw.
 #
 # Install:
@@ -6,7 +6,17 @@
 #   sudo udevadm control --reload-rules && sudo udevadm trigger
 # then replug the dongle.
 
-# Wireless dongle
+# Wireless dongle. All four models ship the same one, so this single rule covers
+# every wireless connection; the mouse behind it is identified by cmd 0x0E.
 KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1970", TAG+="uaccess"
-# Mouse connected by cable
+
+# Mouse connected by cable. Each model has its own product ID, so every one it
+# supports needs a line here — see kModels in src/egg/protocol.h.
+# OP1w 4k
+KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1972", TAG+="uaccess"
+# OP1w 4k v2
 KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1984", TAG+="uaccess"
+# XM2w 4k
+KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1968", TAG+="uaccess"
+# XM2w 4k v2
+KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1982", TAG+="uaccess"

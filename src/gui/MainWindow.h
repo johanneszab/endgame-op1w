@@ -41,6 +41,12 @@ private:
     void harvestButtons();
     void showAsleep();
     void repopulateForModel();
+    void rebuildLodList(bool glassMode);
+
+    // True when the glass-mode checkbox has moved since the blob was read, so
+    // the lift-off byte on screen is on a different scale from the one the
+    // device is using. Both Apply buttons close that gap.
+    bool glassPending() const;
     void setConfigLoaded(bool loaded);
     static void selectOrAdd(QComboBox* box, int value, const QString& fallbackLabel);
     void promptFixedCpi(int buttonIndex);
@@ -52,6 +58,9 @@ private:
     egg::Device        device_;
     egg::DecodedConfig config_;
     bool               populating_ = false;
+    // The glass bit the last successful read/write left on the device. Not
+    // config_.power.glassMode, which tracks the widgets.
+    bool               lastReadGlassMode_ = false;
 
     // info
     QLabel* connectionLabel_ = nullptr;
@@ -71,6 +80,8 @@ private:
     std::array<QSpinBox*, egg::kCpiStageCount>    cpiX_{};
     std::array<QSpinBox*, egg::kCpiStageCount>    cpiY_{};
     std::array<QPushButton*, egg::kCpiStageCount> stageButton_{};
+    std::array<QLabel*, egg::kCpiStageCount>      stageSwatch_{};
+    QLabel* cpiStageHint_ = nullptr;
 
     // advanced
     QComboBox* pollingBox_     = nullptr;

@@ -482,8 +482,20 @@ bool Device::writeSensorBlock(const uint8_t* payload)
     if (!requireModel("sensor settings")) {
         return false;
     }
+
+    // Payload +5 is sensor angle tuning, which the v1 does not have. Its vendor
+    // tool's serializer has no store for that byte at all, so the v1 always
+    // sends 0 there (re/v1/serializers.c, FUN_00404d00). We must match: the
+    // blob byte we decode it from means something unestablished on a v1, and
+    // whole-block writes leave no way to skip the field. PROTOCOL.md section 12.
+    uint8_t buf[kSensorPayload];
+    std::memcpy(buf, payload, kSensorPayload);
+    if (!model().hasAngleTuning) {
+        buf[5] = 0;
+    }
+
     Response r;
-    return command(Cmd::WriteSensor, Target::Mouse, payload, kSensorPayload, 0, &r);
+    return command(Cmd::WriteSensor, Target::Mouse, buf, kSensorPayload, 0, &r);
 }
 
 bool Device::writePowerBlock(const uint8_t* payload)
@@ -547,7 +559,7 @@ uint8_t lodMillimetresToIndex(double mm, LodEncoding enc)
             static_cast<int>(std::lround(mm)), 1, 2));
     }
     const int idx = static_cast<int>(std::lround(mm * 10.0)) - 7;
-    return static_cast<uint8_t>(std::clamp(idx, 0, 13));
+    return static_cast<uint8_t>(std::clamp(idx, 0, kLodMaxIndexV2));
 }
 
 double lodIndexToMillimetres(uint8_t index, LodEncoding enc)
@@ -559,13 +571,49 @@ double lodIndexToMillimetres(uint8_t index, LodEncoding enc)
     return (static_cast<double>(index) + 7.0) / 10.0;
 }
 
+LodEncoding effectiveLodEncoding(const ModelInfo& m, bool glassMode)
+{
+    // The v2 tool's lift-off combo is built by FUN_00411280, which branches on
+    // a byte written only by the glass-mode control: glass on gives the
+    // two-entry millimetre list, glass off the eleven-entry tenths list. The v1
+    // has no glass mode, so this collapses to ModelInfo::lod there. [BIN]
+    if (m.hasGlassMode && glassMode) {
+        return LodEncoding::Millimetres;
+    }
+    return m.lod;
+}
+
+uint8_t lodConvertForGlassMode(uint8_t index, bool glassNowOn)
+{
+    // Exactly the vendor's mapping, from the two arms of FUN_00411280. [BIN]
+    if (glassNowOn) {
+        // tenths -> millimetres
+        if (index < 8)  return 1;   // 0.7 .. 1.4 mm  ->  1 mm
+        if (index <= 10) return 2;  // 1.5 .. 1.7 mm  ->  2 mm
+        return index;               // not a tenths value; leave it alone
+    }
+    // millimetres -> tenths
+    if (index == 1) return 3;       // 1 mm  ->  1.0 mm
+    if (index == 2) return 10;      // 2 mm  ->  1.7 mm, the tenths maximum
+    return index;
+}
+
 std::vector<double> lodOptions(LodEncoding enc)
 {
     if (enc == LodEncoding::Millimetres) {
         return {1.0, 2.0};
     }
+    // 0.7 .. 1.7 mm, eleven values. NOT 0.7 .. 2.0: the v2 vendor tool adds
+    // exactly eleven strings to this combo (FUN_00411280, eleven CB_ADDSTRING
+    // of the literals at 0x0055E070 .. 0x0055E0E8, "0.7mm" .. "1.7mm"), so
+    // indices 11-13 are bytes no vendor tool has ever written and this project
+    // does not write values whose encoding was only guessed at. [BIN]
+    //
+    // The twelfth literal, "2.0mm" at 0x0055E0F4, belongs to that function's
+    // other branch, which the vendor uses when sensor glass mode is on -- see
+    // kLodMaxIndexV2, effectiveLodEncoding() and PROTOCOL.md section 4.
     std::vector<double> v;
-    for (int i = 0; i <= 13; ++i) {
+    for (int i = 0; i <= kLodMaxIndexV2; ++i) {
         v.push_back((static_cast<double>(i) + 7.0) / 10.0);
     }
     return v;

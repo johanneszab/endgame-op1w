@@ -16,7 +16,7 @@ Protocol documentation: [`re/PROTOCOL.md`](re/PROTOCOL.md).
 | XM2w 4k (v1) | should work — untested, no hardware |
 
 The two generations differ in more than a few checkboxes: **lift-off distance
-uses incompatible scales** (v1 is whole millimetres, 1 or 2; v2 is 0.7–2.0 mm in
+uses incompatible scales** (v1 is whole millimetres, 1 or 2; v2 is 0.7–1.7 mm in
 0.1 mm steps), the polling options differ, and one filter flag bit moved. The
 tool therefore identifies the mouse before writing anything model-specific.
 
@@ -37,7 +37,10 @@ captured every settings change myself with [pcap](https://www.winpcap.org/).
 
 Everything the vendor tool exposes, except firmware update:
 
-- **CPI** — 4 stages, independent X/Y, stage count, active stage
+- **CPI** — 4 stages, independent X/Y, stage count, and on v2 the active stage
+  (the v1 firmware ignores that field — it switches stages with the button
+  under the mouse, or any button bound to *CPI cycle*). Each stage's LED
+  colour is shown: 1 blue, 2 green, 3 yellow, 4 red.
 - **Sensor** — lift-off distance, angle snapping, ripple control, motion sync,
   plus angle tuning / glass mode / force max sensor FPS on v2, and the motion
   jitter filter on v1
@@ -139,7 +142,7 @@ an "Asleep" state instead of reporting an error.
 
 ## Status
 
-The protocol layer is derived from static analysis, 43 USB captures and
+The protocol layer is derived from static analysis, 44 USB captures and
 hardware verification; every decoded value was checked against the vendor
 tool's own UI, and the writable ones round-trip through the device.
 

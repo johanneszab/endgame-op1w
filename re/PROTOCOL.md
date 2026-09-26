@@ -1,11 +1,14 @@
-# Endgame Gear OP1w 4k v2 — USB configuration protocol
+# Endgame Gear OP1w 4k / XM2w 4k — USB configuration protocol
+
+Covers both generations. Decoded on an OP1w 4k v2 and checked against an
+OP1w 4k v1; section 12 is the complete list of what differs.
 
 Reverse-engineered for interoperability: enough to write an independent Linux
 configuration tool. Every claim is tagged with how it was established:
 
 - **[BIN]** — read out of the vendor tool's disassembly
 - **[HID]** — read from the device's own HID report descriptor
-- **[CAP]** — confirmed by USB capture (differential analysis, 43 captures)
+- **[CAP]** — confirmed by USB capture (differential analysis, 44 captures)
 - **[DEV]** — confirmed against live hardware on Linux: a setting is changed
   with `egg-cli` and the 1024-byte blob diffed before and after
 - **[UI]** — read off the vendor tool's own interface
@@ -173,6 +176,7 @@ drops and reconnects. Settings are unaffected. **[CAP]**
 +2   u8   lift-off distance     v2 ONLY — v1 uses whole millimetres, see §12
                                 index from 0.7 mm in 0.1 mm steps:
                                 value = round(mm × 10) − 7   (1.0 mm = 3, 1.5 mm = 8)
+                                range 0.7-1.7 mm, i.e. 0..10 — see §12
 +3   u8   angle snapping        0 / 1
 +4   u8   ripple control        0 / 1
 +5   i8   sensor angle tuning   signed degrees: +10 = 0x0A, −10 = 0xF6
@@ -199,8 +203,80 @@ which gathers the payload from struct offsets
 `+0x02, +0x0A, +0x0B, +0x03, +0x04, +0x07, +0x01, +0x00`, then four CPI records
 at stride 6. **[BIN]**
 
-> Enabling sensor glass mode makes the vendor tool drop LOD as a side effect
-> (1.0 mm → 0.8 mm in capture 35). That is UI behaviour, not a device rule.
+### Glass mode changes the lift-off scale **[BIN]** **[CAP]**
+
+On the v2, **sensor glass mode selects which lift-off encoding is in use.** The
+tool's combo builder `FUN_00411280` branches on a byte that only the glass-mode
+control writes:
+
+| glass mode | list | wire value |
+|---|---|---|
+| off | eleven entries, 0.7–1.7 mm | `round(mm×10) − 7`, i.e. `0x00`–`0x0A` |
+| on | two entries, 1.0 mm / 2.0 mm | **whole millimetres, `1` or `2`** |
+
+It rewrites the stored byte across the switch, in both directions: entering
+glass mode maps `≤7 → 1` and `8..10 → 2`; leaving it maps `1 → 3` and
+`2 → 10`.
+
+This retires a long-standing loose end. §4 previously recorded that "enabling
+sensor glass mode makes the vendor tool drop LOD from 1.0 mm to 0.8 mm" and
+called it a UI quirk. It is not a quirk and nothing was dropped: capture
+`35_SensorGlassModeOffToOn` shows the tool writing cmd `0x14` `+2 = 0x01` with
+the same capture's cmd `0x15` carrying glass mode `= 1`. LOD was 1.0 mm, which
+is byte `3` on the tenths scale; the tool rewrote it to `1`, meaning **1 mm on
+the millimetre scale**. Reading that `1` back as tenths is what produced the
+phantom "0.8 mm". **[CAP]**
+
+> **The device does not reinterpret the byte — the vendor's label is
+> cosmetic.** Tested on an OP1w 4k v2, firmware 1.07, probing with a 0.76 mm
+> ISO/IEC 7810 card: the mouse rests on the card and is slid across a gap to a
+> second one, giving a steady 0.76 mm standoff rather than a hand-held lift.
+> **[DEV]**
+>
+> | | lift-off byte | glass | tracking at 0.76 mm |
+> |---|---|---|---|
+> | A | `0x02` | **on** | marginal — only at some angles |
+> | B | `0x02` | off | solid |
+> | C | `0x0A` | off | solid |
+>
+> A and B differ only in the glass bit. If the device read `0x02` as 2.0 mm
+> under glass mode, A would have had the **highest** lift-off of the three —
+> above C's nominal 1.7 mm. It had the lowest. So the scale switch is the
+> vendor tool's UI convention, and what actually changed in A is glass mode's
+> own effect on the sensor, which measurably lowers lift-off at a fixed byte.
+>
+> Two limits on that. B and C did not differ, so this probe saturates above
+> 0.76 mm and says nothing about the byte's effect *within* the tenths scale.
+> And strictly, reinterpretation combined with a glass-mode penalty large
+> enough to more than halve lift-off would fit the same three observations —
+> possible, but it has to explain why 2.0 mm reads lower than 0.9 mm.
+>
+> **Practical consequence:** toggling glass mode in the vendor tool changes the
+> user's real lift-off distance twice over — once because the tool rewrites the
+> byte (1.0 mm becomes `1`, which is 0.8 mm on the scale the device actually
+> uses), and again through glass mode's own effect. It is not a no-op, and it
+> is not announced.
+>
+> **What this means for a port.** No vendor tool ever writes `0x03`–`0x0A` to a mouse in glass mode, so
+> a client that does is writing an encoding with no precedent. This tool
+> follows the switch: `effectiveLodEncoding(model, glassMode)` resolves the
+> scale, `lodConvertForGlassMode()` translates the byte with the vendor's own
+> mapping, and because the glass bit lives in cmd `0x15` while the lift-off
+> byte lives in cmd `0x14`, both blocks are written together **whenever glass
+> mode changes** — writing one alone would leave the device holding a lift-off
+> value in the other scale, and either Apply closes the gap so it cannot be
+> split by using the "wrong" tab. Note how narrow that condition has to be:
+> writing `0x14` on *every* `0x15` write would restate the active CPI stage and
+> the CPI records from a possibly stale copy, silently reverting a stage the
+> user had just changed with the button under the mouse.
+>
+> The conversion is lossy and not an involution — `0`, `1` and `2` all map to
+> `1` on the way in, and `1` maps back to `3` — so toggling glass mode twice
+> does not restore the original lift-off. The vendor behaves the same way; this
+> tool at least names the byte it changed.
+>
+> Note this makes lift-off the one setting whose encoding is **not** fixed per
+> model — so `ModelInfo::lod` is necessary but not sufficient.
 
 ### cmd `0x15` — polling, power & click filters, **11**-byte payload on v2, **10** on v1
 
@@ -399,15 +475,47 @@ record   2  4  1  3        (inverse: record 1 2 3 4 -> stage 3 1 4 2)
 That is a single 4-cycle, not a rotation or a reversal, so it is unlikely to be
 an off-by-one or an endianness slip — it looks like a genuine indirection.
 
-Two concrete leads, neither followed yet:
+One concrete lead remains: the vendor tool **does** read this region —
+`FUN_004041e0` copies blob `0x0F`–`0x22` into the settings object at
+`+0x6E`–`+0x81`. **[BIN]** Finding what dereferences `obj+0x6E` would settle it,
+and unlike the LED test it needs no hardware.
 
-1. The vendor tool **does** read this region: `FUN_004041e0` copies blob
-   `0x0F`–`0x22` into the settings object at `+0x6E`–`+0x81`. **[BIN]** Finding
-   what dereferences `obj+0x6E` would settle it, and unlike the LED test it
-   needs no hardware.
-2. The vendor UI's own swatches — blue, green, yellow, red beside CPI 1–4 —
-   match the LED, not this table. So either they are hardcoded, or they are
-   read through the same indirection the firmware uses.
+What the region is *not* is now settled: it is not what paints the vendor UI.
+
+### The stage → colour mapping is fixed, and hardcoded in the tool
+
+```
+CPI 1  blue      CPI 2  green      CPI 3  yellow      CPI 4  red
+```
+
+The colour belongs to the **stage**, not to the stage's CPI value:
+
+- All five vendor binaries — OP1w 4k v1.03 and v1.04, OP1w 4k v2 v1.02, XM2w 4k
+  v1.03, XM2w 4k v2 v1.02 — contain the identical four-instruction sequence
+  writing this palette, in stage order, into four swatch controls at stride
+  `0x9C`. The palette is a literal, not a read: **[BIN]**
+
+  ```
+  c7 86 7c 10 00 00  00 00 ff 00    MOV [ESI+0x107C], 0x00FF0000   blue
+  c7 86 18 11 00 00  00 ff 00 00    MOV [ESI+0x1118], 0x0000FF00   green
+  c7 86 b4 11 00 00  ff ff 00 00    MOV [ESI+0x11B4], 0x0000FFFF   yellow
+  c7 86 50 12 00 00  ff 00 00 00    MOV [ESI+0x1250], 0x000000FF   red
+  ```
+
+  (v1.04 at file offset `0x00C282`, v2 at `0x00C695`, both XM2w likewise.
+  `COLORREF` is `0x00BBGGRR`, so these read blue, green, yellow, red.)
+- The vendor UI keeps CPI 2's swatch green with that stage set to **1480** CPI,
+  so the swatch does not track the value. **[UI]**
+- It matches the LED on hardware. **[DEV]**
+
+Endgame Gear's public documentation lists the colours against 400 / 800 / 1600 /
+3200 — but it is describing the factory defaults ("come pre-programmed with
+default … levels, which are color-coded as follows"), and those are exactly the
+default values of stages 1–4. It is not a value→colour rule.
+
+Since the mapping is a literal in every binary and identical across all four
+models, a port should hardcode it too rather than trying to derive it from the
+blob. `kStageColours` in `src/egg/protocol.h` does.
 
 
 ### Read responses
@@ -467,6 +575,56 @@ command reply.
 03 B1 01 00 00 00 00 00                  radio link up   (mouse awake)
 03 B1 F0 0A 00 00 00 00                  radio link down (deep sleep)
 ```
+
+The dispatcher in the v1 tool (`FUN_00415b70`, reached from the listener
+through the callback in `DAT_00583430`) switches on exactly **four** codes —
+`0x06`, `0x0E`, `0xB1`, `0xB4` — and a code outside that set reaches a
+do-nothing path, so the vendor software drops it. It reads byte 1 as the code,
+byte 2 as a sub-value and bytes 3–4 as a little-endian short. **[BIN]** The
+same four are dispatched by the v1.04 and XM2w v1.03 tools; the v2 tools add a
+fifth arm, `0x02`, which they read as the 0-based active CPI stage and stage
+into cmd `0x14` payload `+7`. Whether any device ever *emits* `0x02` is
+unestablished — it appears in none of the 44 captures. **[BIN]** **[?]**
+
+Two of the v1's four are not in the captures above:
+
+- **`0x06` — polling rate changed on the mouse.** Byte 2 is the polling byte
+  and only `0x08`/`0x04`/`0x02` are handled; the tool selects the matching
+  combo entry and stores the raw value into its settings struct. So the mouse
+  can change its own polling rate and say so. **[BIN]**
+- **`0x0E` — mouse info.** The tool compares bytes 3–4 against `0x1972`, its
+  own mouse PID, and greys the whole control set when they differ. Note this is
+  bytes 3–4, not the `+2..+3` of a cmd `0x0E` *response*; the event's own layout
+  is not established. **[BIN]**
+
+It also accepts `0xF1` as a second link-down sub-code alongside `0xF0`. **[BIN]**
+
+**`0x30` is observed but undecoded.** It is in the captures, four times, all
+8 bytes on endpoint `0x82`, and no vendor tool dispatches on it: **[CAP]**
+
+```
+03 30 ff 00 08 00 00 00   41_PairDongle, ~10.0 s after the cmd 0x70
+03 30 09 00 1b 00 00 00   42_OnOffOnOffCycle
+03 30 0e 00 1b 00 00 00   42_OnOffOnOffCycle
+03 30 00 00 1b 00 00 00   43_OnOffOnOffCycle
+```
+
+Byte 2 varies (`0xFF`, `0x09`, `0x0E`, `0x00`), byte 3 is always `0x00`, and
+byte 4 is `0x08` for the pairing case against `0x1B` for the power cycles —
+the position a battery event uses for the target selector. Every sighting is
+during link establishment, which is suggestive but not enough to name it.
+
+**`0x31` is observed but undecoded.** An OP1w 4k v1 emitted
+`03 31 14 10 00 00 00 00` immediately after a cmd `0x14` write. **[DEV]** It
+appears in none of the 44 v2 captures, and **no vendor tool dispatches on it** —
+so it is dropped by the vendor software too, and cannot be an error the tool
+would need to act on. Under the layout above it decodes as code `0x31`,
+sub-value `0x14`, short `0x0010`; `0x14` being exactly the command that had
+just been written is suggestive of a write-acknowledgement, but one sample
+cannot distinguish that from a coincidence. The decisive test is cheap: run
+`egg-cli listen` on a v1 and apply a `0x15` change, then a `0x16` change. If
+`03 31 15 …` and `03 31 16 …` follow, it is a per-block acknowledgement; if
+only `0x14` ever produces it, it is about the sensor block specifically.
 
 | Byte | `0xB4` battery event | `0xB1` link event |
 |---|---|---|
@@ -619,14 +777,20 @@ None of these block a working tool.
    X != Y and seeing whether Y is forced to X — which this tool will not emit,
    since it derives the flag from `x != y`. Academic for a port: the tool is
    correct under either reading.
-4. cmd `0x0E` response bytes `+4..+5` — consistently the mouse PID minus one
-   (`0x1971` on v1, `0x1983` on v2). Plausibly a bootloader/DFU identity. **[?]**
+4. ~~cmd `0x0E` response bytes `+4..+5`~~ — **resolved.** They are the mouse's
+   **bootloader/DFU product ID** (`0x1971` on v1, `0x1983` on v2 — the mouse PID
+   minus one). The v1 firmware updater opens exactly two USB identities, and all
+   nine call sites of its device-open helper are immediately preceded by a
+   literal `MOV EDX,imm32` of either `0x1972` (application) or `0x1971`
+   (bootloader). **[BIN]** See `firmware/FIRMWARE.md` §4.
 5. Commands `0x71` ("Pair Default") and `0x72` ("Get pair data") — present in
    the binary but unreachable from this version of the UI.
 6. Blob bytes `0x0F`–`0x22`: four RGB colours in 5-byte records with an
    incrementing index (§4). They are the CPI LED's four colours, but not in
    stage order — reading them positionally is disproved against the LED — so
-   what dereferences them is still open. Blob byte `0x02`, formerly thought
+   what dereferences them is still open. The vendor UI is no longer a lead:
+   its swatches are a hardcoded literal, not a read of this region (§4).
+   Nothing this tool does depends on it. Blob byte `0x02`, formerly thought
    to be glass mode, is now unaccounted for.
 7. Surface calibration and sensor power mode — named in the binary's strings but
    absent from the v1.02 UI.
@@ -849,12 +1013,15 @@ model-specific writes until it can.
 | | v1 (OP1w 4k, XM2w 4k) | v2 (OP1w 4k v2, XM2w 4k v2) |
 |---|---|---|
 | Mouse PID (`0x0E` +2) | `0x1972` / `0x1968` | `0x1984` / `0x1982` |
-| **LOD** (cmd `0x14` +2) | **millimetres: `1`, `2` only** | **`round(mm×10) − 7`, 0.7–2.0 mm** |
+| **LOD** (cmd `0x14` +2) | **millimetres: `1`, `2` only** | **`round(mm×10) − 7`, 0.7–1.7 mm** |
 | Polling (cmd `0x15` +1) | `0x08`/`0x04`/`0x02` only | plus `0x80` (1000 Hz power saving), `0x40` (125 Hz office) |
 | Flags bit 4 (`0x10`) | **motion jitter filter** | unused |
 | Flags bit 5 (`0x20`) | unused | multiclick acknowledgement |
 | Flags bit 6 (`0x40`) | unused | force max sensor FPS |
 | cmd `0x14` +5 | never written, stays `0x00` | sensor angle tuning |
+| cmd `0x14` +7 | **written, but ignored by the device** | active CPI stage |
+| CPI range the tool allows | 50–26000, step 50 | **10–30000**, step 10 below 10000 |
+| Lift-off encoding | fixed | **depends on glass mode** — see §4 |
 | cmd `0x15` payload | **10 bytes** written | **11 bytes** written |
 | cmd `0x15` length byte | `0x0A` | `0x0A` (under-declares) |
 
@@ -863,22 +1030,68 @@ model-specific writes until it can.
 > mean 0.8 mm and 0.9 mm. No value is safe under both readings, which is why a
 > client must know the model before writing that byte. **[BIN]**
 
+> **The v1 cannot switch CPI stage from software.** Selecting another stage and
+> applying changes nothing, while editing the active stage's CPI takes effect
+> at once. **[DEV]** The v1 tool agrees in an unusual way: its cmd `0x14`
+> serializer `FUN_00404d00` *does* write payload `+7` — from settings `+0x08`,
+> which the config-blob parser fills from blob `0x0D` and which **nothing else
+> in the binary ever writes**. `RangeXrefs` over the settings struct finds a
+> single reference to `0x00583858`, the Apply handler passing its address as
+> the payload base; the two writes to the field are the blob parser
+> (`FUN_00404230`) and the defaults filler (`FUN_00416120`). The Basic Settings
+> populate `FUN_0040fa10` does not read it either. So the v1 tool echoes the
+> device's own byte back on every Apply, and its Basic tab has no radio buttons
+> beside the CPI rows. **[BIN]** **[UI]**
+>
+> Because writes are whole-block there is no way to omit `+7`. A client must
+> send back exactly what it read — which is what `hasCpiStageSelect = false`
+> makes `harvestSensor()` do. The stage is changed with the CPI button under
+> the mouse instead; §4's colour table is how the user tells which one is live.
+
 The v1 tool's LOD combo is populated from a `DLGINIT` resource holding exactly
 `"1mm"` and `"2mm"`, and the only instructions writing that settings byte
 produce `0x01` or `0x02`; anything unexpected on read displays as `1mm`. The v2
-tool builds its fourteen-item list in code instead. **[BIN]**
+tool builds its list in code instead — and that list is **eleven** entries,
+0.7 mm to 1.7 mm, not the 0.7–2.0 mm the formula would extend to. Its combo
+builder `FUN_00411280` issues exactly eleven `CB_ADDSTRING` calls, for the
+literals at `0x0055E070`–`0x0055E0E8` (`"0.7mm"`…`"1.7mm"`). **[BIN]**
+
+So `0x0B`–`0x0D` are bytes **no vendor tool has ever written**, and this tool
+does not write them either: `kLodMaxIndexV2` caps the list at `0x0A`.
+
+> That same function has a second branch, and it is **not** a v1 list — see
+> "Glass mode changes the lift-off scale" in §4. It matters here because it is
+> where the vendor converts between the two encodings, which pins the maximum:
+> coming back to the tenths scale it maps a stored `2` to **`10`** — its own
+> maximum, 1.7 mm — rather than to the `13` the formula would extrapolate for
+> 2.0 mm. The vendor clamps; it does not extend. **[BIN]**
 
 ### What is identical
 
 Command set and header bytes, blob offsets, the 5-byte CPI records, the 8×7
 button table and its type codes, SPDT `0xF0`/`0xF1`, the multiclick filter
-bytes, both inactivity timeouts, pairing, factory reset, and the notification
-channel. The differences above are the complete set.
+bytes, both inactivity timeouts, pairing, factory reset, and the CPI stage LED
+colours (§4).
+
+Two caveats on that list. The **notification channel** is identical in
+transport and framing, but the *event set* is not established as identical:
+the v1 tool dispatches `0x06` and accepts `0xF1` (§4a), and the v2 tool's own
+dispatcher has never been decompiled — only its listener loop. And a v1
+emits `0x31`, which no capture of a v2 contains. The **lift-off option sets**
+and **polling option sets** differ in length and order, so a combo index from
+one generation is meaningless on the other; only the wire values transfer.
 
 ### Consequence for a port
 
 Read cmd `0x0E`, map `+2..+3` through a model table, and gate:
-the LOD scale, the polling option set, flag bits 4/5/6, cmd `0x14` `+5`, and the
-cmd `0x15` payload length. Until `0x0E` answers, treat the model as unknown and
-refuse those writes rather than guessing — every other setting (CPI, timeouts,
-click filters, button mapping) is model-independent and safe meanwhile.
+the LOD scale, the polling option set, flag bits 4/5/6, cmd `0x14` `+5`, cmd
+`0x14` `+7`, and the cmd `0x15` payload length. Until `0x0E` answers, treat the
+model as unknown and refuse those writes rather than guessing — every other
+setting (CPI, timeouts, click filters, button mapping) is model-independent and
+safe meanwhile.
+
+Two of those are gates on *offering* the setting rather than on the write:
+`+5` and `+7` are sent on both generations because the block is written whole.
+A client keeps them correct by never letting the UI change a field the model
+does not implement, so the value read from the device is the value written
+back.
