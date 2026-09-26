@@ -40,6 +40,9 @@ private:
     void harvestPower();
     void harvestButtons();
     void showAsleep();
+    void repopulateForModel();
+    void setConfigLoaded(bool loaded);
+    static void selectOrAdd(QComboBox* box, int value, const QString& fallbackLabel);
     void promptFixedCpi(int buttonIndex);
     void setBusy(bool busy);
     void report(const QString& message, bool error = false);
@@ -74,6 +77,7 @@ private:
     QCheckBox* motionSyncBox_  = nullptr;
     QCheckBox* glassModeBox_   = nullptr;
     QCheckBox* forceMaxFpsBox_ = nullptr;
+    QCheckBox* motionJitterBox_ = nullptr;
     QSpinBox*  angleTuningBox_ = nullptr;
     QCheckBox* slamclickBox_   = nullptr;
     QCheckBox* multiclickBox_  = nullptr;
@@ -86,6 +90,10 @@ private:
     // buttons
     QCheckBox* leftHandedBox_ = nullptr;
     std::array<QComboBox*, egg::kButtonCount> buttonAction_{};
+
+    QPushButton* applySensorBtn_  = nullptr;
+    QPushButton* applyPowerBtn_   = nullptr;
+    QPushButton* applyButtonsBtn_ = nullptr;
 
     QTimer* eventTimer_ = nullptr;
 };

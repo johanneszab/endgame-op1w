@@ -131,7 +131,7 @@ Not guessable from a capture; worth copying verbatim.
 | Cmd | Header | Dir | Payload | Meaning |
 |---|---|---|---|---|
 | `0x0D` | `A1 0D 00 00` | read | 14 B | **dongle info** (firmware version) |
-| `0x0E` | `A1 0E 00 00` | read | 14 B | **mouse info** (address + firmware version) |
+| `0x0E` | `A1 0E 00 00` | read | 14 B | **mouse info** — the mouse's own VID/PID and firmware |
 | `0x0F` | `A1 0F 01 00` | probe | — | **connection probe / target select** |
 | `0x12` | `A1 12 00 00` | read | **1024 B via report `0xA0`** | **read whole config blob** |
 | `0x13` | `A1 13 00 00` | write | — | **factory reset** |
@@ -170,7 +170,8 @@ drops and reconnects. Settings are unaffected. **[CAP]**
 ```
 +0        ?                     always 0x00 in every capture
 +1   u8   LED on lift-off       1 = LED lights on lift-off, 0 = disabled
-+2   u8   lift-off distance     index from 0.7 mm in 0.1 mm steps:
++2   u8   lift-off distance     v2 ONLY — v1 uses whole millimetres, see §12
+                                index from 0.7 mm in 0.1 mm steps:
                                 value = round(mm × 10) − 7   (1.0 mm = 3, 1.5 mm = 8)
 +3   u8   angle snapping        0 / 1
 +4   u8   ripple control        0 / 1
@@ -201,12 +202,13 @@ at stride 6. **[BIN]**
 > Enabling sensor glass mode makes the vendor tool drop LOD as a side effect
 > (1.0 mm → 0.8 mm in capture 35). That is UI behaviour, not a device rule.
 
-### cmd `0x15` — polling, power & click filters, **11**-byte payload
+### cmd `0x15` — polling, power & click filters, **11**-byte payload on v2, **10** on v1
 
 ```
 +0   u8   motion sync           0 / 1
 +1   u8   polling / power mode  see the table below
-+2   u8   flags                 bit0 = slamclick filter
++2   u8   flags                 bit0 = slamclick filter      (both)
+                                bit4 = motion jitter filter  (v1 only, §12)
                                 bit5 = multiclick filter enable
                                 bit6 = force max sensor FPS
 +3   u8   power saving          timeout in minutes; bit7 set = disabled
@@ -218,6 +220,11 @@ at stride 6. **[BIN]**
 +9   u8   deep sleep            timeout in minutes; bit7 set = disabled
 +10  u8   sensor glass mode     0 / 1   — past the declared length, still honoured
 ```
+
+> The eleventh byte is v2-only: the v1 tool writes ten and has no glass mode.
+> Sending ten to a v2 is NOT "omit the field" — the report is zero-filled and
+> the v2 acts on `+10` regardless of the declared length, so ten bytes means
+> "glass mode off". Know the model before writing this block. See §12.
 
 Button order is left, right, middle, **back, forward** — the same order as the
 button table, not the order the vendor UI lists them in. **[BIN]** The five
@@ -409,7 +416,7 @@ Two concrete leads, neither followed yet:
 |---|---|---|
 | `0xB4` | `+0` battery %, `+1` signal level, `+2` target (`0x0F`) | `0x41` = 65 %, matching the UI exactly. Same three bytes a battery notification carries — see §4a |
 | `0x0D` | `+0..+1` = dongle firmware | `01 01` = v1.01 |
-| `0x0E` | `+0..+5` = 6-byte address **[?]**, `+6..+7` = mouse firmware | `01 07` = v1.07 |
+| `0x0E` | `+0..+1` VID, `+2..+3` **mouse PID**, `+4..+5` PID−1 **[?]**, `+6..+7` firmware | v1 `67 33 72 19 71 19 01 08`, v2 `67 33 84 19 83 19 01 07` **[DEV]** |
 
 ---
 
@@ -612,7 +619,8 @@ None of these block a working tool.
    X != Y and seeing whether Y is forced to X — which this tool will not emit,
    since it derives the flag from `x != y`. Academic for a port: the tool is
    correct under either reading.
-4. cmd `0x0E` response bytes `+0..+5` — probably the pairing address.
+4. cmd `0x0E` response bytes `+4..+5` — consistently the mouse PID minus one
+   (`0x1971` on v1, `0x1983` on v2). Plausibly a bootloader/DFU identity. **[?]**
 5. Commands `0x71` ("Pair Default") and `0x72` ("Get pair data") — present in
    the binary but unreachable from this version of the UI.
 6. Blob bytes `0x0F`–`0x22`: four RGB colours in 5-byte records with an
@@ -729,14 +737,13 @@ likewise share `FUN_004035a0` with each other.
 
 > **All four wireless models share dongle PID `0x1970`.** Each tool opens that
 > same PID from three call sites, plus one model-specific PID from a fourth.
-> Only the OP1w 4k v2 pair is confirmed against hardware; the rest is inferred
-> from identical code structure.
+> The OP1w 4k and OP1w 4k v2 pairs are both confirmed against hardware; the two
+> XM2w entries are inferred from identical code structure.
 
-The consequence is the awkward part: **over the dongle, USB IDs do not identify
-which mouse is attached.** A universal tool sees `3367:1970` whichever of the
-four is paired. Candidate discriminators, none tested: the 6-byte address in
-the cmd `0x0E` response, the mouse firmware version, or an unidentified byte in
-the config blob.
+So **over the dongle, USB IDs do not identify which mouse is attached** — a tool
+sees `3367:1970` whichever of the four is paired. That is resolved, but not by
+USB: **cmd `0x0E` reports the mouse's own VID/PID**, which is the discriminator.
+See §12.
 
 Cabled, the PID is unambiguous.
 
@@ -759,37 +766,29 @@ is absent from all four.
 
 The two generations are separate builds (~1.954 MB vs 1.967 MB), and the v2
 tools differ from each other only in constants: the OP1w 4k v2 and XM2w 4k v2
-binaries are the same size to the byte. Their UI label sets are identical
-within a generation, and v2 adds exactly three features over v1:
+binaries are the same size to the byte.
 
-| Feature | Where it lives | v1 | v2 |
-|---|---|---|---|
-| Sensor angle tuning | cmd `0x14` payload `+5` | — | yes |
-| Force max sensor FPS | cmd `0x15` flags bit 6 | — | yes |
-| Sensor glass mode | cmd `0x15` payload `+10` | — | yes |
+> An earlier revision of this section, written from string dumps alone, said
+> the delta was three v2-only features and nothing else. **That was wrong**, in
+> two ways that matter for writing bytes. Strings are present in a binary
+> whether or not its UI uses them, and a shared field can still carry a
+> different encoding. The corrected, hardware-checked comparison is in §12:
+> v1 additionally has a **motion jitter filter** (flags bit 4, a string the v2
+> binary also carries but never displays), and **lift-off distance uses an
+> incompatible scale** between the generations.
 
-Everything else — CPI, LOD, angle snapping, ripple control, motion sync,
-polling, both timeouts, click filters, SPDT, button mapping, left-handed mode —
-is present in both.
-
-That lines up suspiciously well with the undeclared eleventh byte in §2:
-glass mode is the v2-only field that sits at payload `+10`, one past the
-declared length of ten. The likeliest reading is that **ten was the truth on
-v1, and v2 appended a byte without updating the length field**. **[?]**
+The undeclared eleventh byte in §2 is explained by the split: glass mode is the
+v2-only field at payload `+10`, one past the declared ten. **Ten was the truth
+on v1** — its tool writes exactly ten — **and v2 appended a byte without
+updating the length field.** Confirmed in both binaries. **[BIN]**
 
 ### What this means for supporting them
 
-Adding the cabled PIDs is enough for discovery, and this tool now does that
-(`kModels` in `protocol.h`). Two caveats:
-
-1. A v1 device must not be sent the three v2-only fields. `writePowerBlock()`
-   sends ten payload bytes instead of eleven when the model has no glass mode,
-   and both front-ends disable the other two.
-2. Over the dongle the model is unknown, so the capability set falls back to
-   v2 — the only one verified. Plugging a **v1 mouse in by cable** gets correct
-   v1 handling; using it **wirelessly** would be treated as v2. Until a
-   discriminator is found that gap cannot be closed, and nothing here has been
-   tested on a v1 device.
+Superseded by §12, which has the hardware-checked delta and the cmd `0x0E`
+discriminator. Discovery by PID is necessary but nowhere near sufficient: the
+lift-off scale and the polling option set differ, so the model must be known
+*before* those bytes are written, and over the dongle only cmd `0x0E` supplies
+it.
 
 ---
 
@@ -816,3 +815,70 @@ directions — combined to split and split to combined. **[DEV]**
 
 Neither test isolates the `xySplit` byte; see §8 item 3a. That is a question
 about the firmware, not about whether this implementation is correct.
+
+---
+
+## 12. The v1 generation, and telling the models apart
+
+The OP1w 4k (v1) was tested on hardware alongside the v2. The two are **not**
+feature-subset compatible: two fields use different encodings, so a client that
+treats v1 as "v2 minus some checkboxes" will write wrong values.
+
+### Identifying the model
+
+Both dongles enumerate as `3367:1970` with identical descriptors, revision,
+strings (empty serial, product "Endgame Gear HS Dongle") and collection layout.
+USB cannot tell them apart. **[DEV]**
+
+**Cmd `0x0E` can.** Its payload carries the mouse's own USB identity:
+
+```
+v1  67 33 72 19 71 19 01 08     VID 0x3367  PID 0x1972  fw 1.08
+v2  67 33 84 19 83 19 01 07     VID 0x3367  PID 0x1984  fw 1.07
+```
+
+`+2..+3` is the mouse PID, and it matches the cabled PID extracted from each
+vendor binary (§10). That is the discriminator. **[DEV]**
+
+It fails while the mouse is asleep, so a client cannot always identify the model
+at startup — it must either wait for a link-up notification (§4a) or refuse
+model-specific writes until it can.
+
+### What differs
+
+| | v1 (OP1w 4k, XM2w 4k) | v2 (OP1w 4k v2, XM2w 4k v2) |
+|---|---|---|
+| Mouse PID (`0x0E` +2) | `0x1972` / `0x1968` | `0x1984` / `0x1982` |
+| **LOD** (cmd `0x14` +2) | **millimetres: `1`, `2` only** | **`round(mm×10) − 7`, 0.7–2.0 mm** |
+| Polling (cmd `0x15` +1) | `0x08`/`0x04`/`0x02` only | plus `0x80` (1000 Hz power saving), `0x40` (125 Hz office) |
+| Flags bit 4 (`0x10`) | **motion jitter filter** | unused |
+| Flags bit 5 (`0x20`) | unused | multiclick acknowledgement |
+| Flags bit 6 (`0x40`) | unused | force max sensor FPS |
+| cmd `0x14` +5 | never written, stays `0x00` | sensor angle tuning |
+| cmd `0x15` payload | **10 bytes** written | **11 bytes** written |
+| cmd `0x15` length byte | `0x0A` | `0x0A` (under-declares) |
+
+> **The lift-off scales are incompatible, not merely offset.** Under v1's
+> encoding the bytes `1` and `2` mean 1.0 mm and 2.0 mm; under v2's they would
+> mean 0.8 mm and 0.9 mm. No value is safe under both readings, which is why a
+> client must know the model before writing that byte. **[BIN]**
+
+The v1 tool's LOD combo is populated from a `DLGINIT` resource holding exactly
+`"1mm"` and `"2mm"`, and the only instructions writing that settings byte
+produce `0x01` or `0x02`; anything unexpected on read displays as `1mm`. The v2
+tool builds its fourteen-item list in code instead. **[BIN]**
+
+### What is identical
+
+Command set and header bytes, blob offsets, the 5-byte CPI records, the 8×7
+button table and its type codes, SPDT `0xF0`/`0xF1`, the multiclick filter
+bytes, both inactivity timeouts, pairing, factory reset, and the notification
+channel. The differences above are the complete set.
+
+### Consequence for a port
+
+Read cmd `0x0E`, map `+2..+3` through a model table, and gate:
+the LOD scale, the polling option set, flag bits 4/5/6, cmd `0x14` `+5`, and the
+cmd `0x15` payload length. Until `0x0E` answers, treat the model as unknown and
+refuse those writes rather than guessing — every other setting (CPI, timeouts,
+click filters, button mapping) is model-independent and safe meanwhile.

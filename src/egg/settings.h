@@ -65,9 +65,10 @@ struct PowerBlock {
 
     bool glassMode = false;   // payload byte 10, past the declared length
 
-    bool slamclick() const  { return flags & kSlamclickFilter; }
-    bool multiclick() const { return flags & kMulticlickFilter; }
-    bool forceMaxFps() const { return flags & kForceMaxSensorFps; }
+    bool slamclick() const    { return flags & kSlamclickFilter; }
+    bool motionJitter() const { return flags & kMotionJitterFilter; }
+    bool multiclick() const   { return flags & kMulticlickFilter; }
+    bool forceMaxFps() const  { return flags & kForceMaxSensorFps; }
     void setFlag(uint8_t bit, bool on);
 
     void encode(uint8_t out[kPowerPayload]) const;
@@ -83,7 +84,11 @@ struct PollingOption {
     int         hz;
     const char* label;
 };
-const std::vector<PollingOption>& pollingOptions();
+
+// Only the v2 generation offers the wireless power-saving and office-mode
+// variants; a v1 device has no UI option that can produce 0x80 or 0x40, so
+// they are not offered for one.
+std::vector<PollingOption> pollingOptions(const ModelInfo& model);
 const char* pollingLabel(uint8_t raw);
 
 // --------------------------------------------------------------- cmd 0x16 ---

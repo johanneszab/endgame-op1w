@@ -5,6 +5,8 @@
 // config blob, so each command is a read-modify-write against live state.
 
 #include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -103,6 +105,37 @@ size_t buttonIndex(const std::string& name)
         "special wheel-up wheel-down)");
 }
 
+// Settings whose encoding or valid range depends on which mouse is attached.
+// Writing one of these blind is how a v1 device ends up with a v2 lift-off
+// index, so refuse rather than guess.
+void requireIdentifiedModel(Device& dev, const std::string& setting)
+{
+    if (dev.modelIdentified()) {
+        return;
+    }
+    die("cannot set " + setting + " until the mouse is identified — cmd 0x0E "
+        "did not answer, which usually means it is asleep. Move it and retry. "
+        "(Every wireless dongle enumerates as the same USB ID, so the model "
+        "cannot be inferred without asking the mouse.)");
+}
+
+// The two generations put lift-off distance on incompatible scales, so an
+// unidentified mouse gets the raw byte rather than a number that would be
+// wrong on one of them.
+std::string lodText(Device& dev, uint8_t lodIndex)
+{
+    char buf[80];
+    if (!dev.modelIdentified()) {
+        std::snprintf(buf, sizeof buf,
+                      "raw 0x%02X (scale unknown until the mouse is identified)",
+                      lodIndex);
+        return buf;
+    }
+    std::snprintf(buf, sizeof buf, "%.1f mm",
+                  lodIndexToMillimetres(lodIndex, dev.model().lod));
+    return buf;
+}
+
 std::string timeoutText(bool enabled, uint8_t minutes)
 {
     return enabled ? std::to_string(minutes) + " min" : std::string("disabled");
@@ -114,9 +147,10 @@ void cmdInfo(Device& dev)
     std::cout << "Device      : " << dev.info().product
               << " (" << (dev.info().wired ? "wired" : "wireless") << ")\n"
               << "Model       : " << m.name;
-    if (m.isDongle) {
-        std::cout << "  (the dongle is shared across all four wireless models,"
-                     " so the mouse cannot be identified from USB alone)";
+    if (!dev.modelIdentified()) {
+        std::cout << "  (cmd 0x0E did not answer — wake the mouse and retry;"
+                     " every dongle enumerates as the same USB ID, so the model"
+                     " cannot be known until it does)";
     }
     std::cout << "\nPath        : " << dev.info().path << "\n";
 
@@ -179,7 +213,7 @@ void cmdShow(Device& dev)
 
     std::cout << std::fixed << std::setprecision(1)
               << "CPI levels  : " << static_cast<int>(c.sensor.cpiLevels) << "\n"
-              << "LOD         : " << lodIndexToMillimetres(c.sensor.lodIndex) << " mm\n"
+              << "LOD         : " << lodText(dev, c.sensor.lodIndex) << "\n"
               << "Angle snap  : " << (c.sensor.angleSnapping ? "on" : "off") << "\n"
               << "Ripple ctrl : " << (c.sensor.rippleControl ? "on" : "off") << "\n"
               << "Angle tuning: " << static_cast<int>(c.sensor.angleTuning) << " deg\n"
@@ -188,6 +222,7 @@ void cmdShow(Device& dev)
               << "Motion sync : " << (c.power.motionSync ? "on" : "off") << "\n"
               << "Glass mode  : " << (c.power.glassMode ? "on" : "off") << "\n"
               << "Max sensor  : " << (c.power.forceMaxFps() ? "on" : "off") << "\n"
+              << "MotionJitter: " << (c.power.motionJitter() ? "on" : "off") << "\n"
               << "Slamclick   : " << (c.power.slamclick() ? "on" : "off") << "\n"
               << "Multiclick  : " << (c.power.multiclick() ? "on" : "off") << "\n"
               << "Power saving: " << timeoutText(c.power.powerSavingEnabled,
@@ -246,7 +281,8 @@ void usage()
         "  set cpi <1-4> <x> [y]         CPI for one stage, in CPI units\n"
         "  set cpi-levels <1-4>          number of active stages\n"
         "  set active-stage <1-4>        which stage is selected\n"
-        "  set lod <mm>                  lift-off distance, 0.7 - 2.0\n"
+        "  set lod <mm>                  lift-off distance; v1 offers 1 and 2,\n"
+        "                                v2 offers 0.7 - 2.0 in 0.1 steps\n"
         "  set angle-snap <on|off>\n"
         "  set ripple <on|off>\n"
         "  set angle-tuning <-30..30>    degrees\n"
@@ -256,9 +292,10 @@ void usage()
         "                                saving; 125 = office mode\n"
         "  set motion-sync <on|off>\n"
         "  set glass-mode <on|off>\n"
-        "  set max-sensor-fps <on|off>\n"
+        "  set max-sensor-fps <on|off>   v2 models only\n"
+        "  set motion-jitter <on|off>    v1 models only\n"
         "  set slamclick <on|off>\n"
-        "  set multiclick <on|off>\n"
+        "  set multiclick <on|off>       v2 models only\n"
         "  set power-saving <1-120|off>\n"
         "  set deep-sleep <1-120|off>\n"
         "  set click-filter <button> <1-15|gx-safe|gx-speed>\n"
@@ -318,14 +355,38 @@ int doSet(Device& dev, const std::vector<std::string>& args)
             if (n < 1 || n > static_cast<int>(kCpiStageCount)) die("active-stage must be 1-4");
             cfg.sensor.activeStage = static_cast<uint8_t>(n - 1);
         } else if (key == "lod") {
-            const double mm = parseDouble(args[2]);
-            if (mm < 0.7 || mm > 2.0) die("lod must be 0.7 - 2.0 mm");
-            cfg.sensor.lodIndex = lodMillimetresToIndex(mm);
+            requireIdentifiedModel(dev, "lod");
+            const double mm   = parseDouble(args[2]);
+            const auto   opts = lodOptions(dev.model().lod);
+
+            // Snap to the nearest distance this model offers rather than
+            // demanding an exact hit, but refuse anything outside its range —
+            // v1 offers only 1 and 2 mm, so silently clamping 5 mm to 2 mm
+            // would be worse than saying so.
+            if (mm < opts.front() - 0.001 || mm > opts.back() + 0.001) {
+                char lo[16], hi[16];
+                std::snprintf(lo, sizeof lo, "%.1f", opts.front());
+                std::snprintf(hi, sizeof hi, "%.1f", opts.back());
+                die(std::string("lod must be between ") + lo + " and " + hi
+                    + " mm on " + dev.model().name);
+            }
+            double nearest = opts.front();
+            for (double o : opts) {
+                if (std::fabs(o - mm) < std::fabs(nearest - mm)) {
+                    nearest = o;
+                }
+            }
+            if (std::fabs(nearest - mm) > 0.001) {
+                std::printf("note: %s offers %.1f mm, not %.1f — using %.1f\n",
+                            dev.model().name, nearest, mm, nearest);
+            }
+            cfg.sensor.lodIndex = lodMillimetresToIndex(nearest, dev.model().lod);
         } else if (key == "angle-snap") {
             cfg.sensor.angleSnapping = parseBool(args[2]);
         } else if (key == "ripple") {
             cfg.sensor.rippleControl = parseBool(args[2]);
         } else if (key == "angle-tuning") {
+            requireIdentifiedModel(dev, key);
             if (!dev.model().hasAngleTuning) {
                 die(std::string("sensor angle tuning is not available on ")
                     + dev.model().name);
@@ -351,6 +412,7 @@ int doSet(Device& dev, const std::vector<std::string>& args)
 
     // ---- power block ----
     if (key == "polling") {
+        requireIdentifiedModel(dev, "polling");
         const std::string& v = args[2];
         uint8_t mode = 0;
         if (v == "4000")        mode = static_cast<uint8_t>(PollingMode::Hz4000);
@@ -359,23 +421,46 @@ int doSet(Device& dev, const std::vector<std::string>& args)
         else if (v == "1000ps") mode = static_cast<uint8_t>(PollingMode::Hz1000PowerSave);
         else if (v == "125")    mode = static_cast<uint8_t>(PollingMode::Hz125Office);
         else die("polling must be 4000, 2000, 1000, 1000ps or 125");
+
+        // The power-saving and office-mode values exist only on the v2
+        // generation; a v1 device has no UI option that produces them.
+        if (!dev.model().hasPowerSavePolling &&
+            (mode == static_cast<uint8_t>(PollingMode::Hz1000PowerSave) ||
+             mode == static_cast<uint8_t>(PollingMode::Hz125Office))) {
+            die(std::string(v) + " is not available on " + dev.model().name
+                + " (it offers 1000, 2000 and 4000 only)");
+        }
         cfg.power.pollingMode = mode;
     } else if (key == "motion-sync") {
         cfg.power.motionSync = parseBool(args[2]);
     } else if (key == "glass-mode") {
+        requireIdentifiedModel(dev, key);
         if (!dev.model().hasGlassMode) {
             die(std::string("glass mode is not available on ") + dev.model().name);
         }
         cfg.power.glassMode = parseBool(args[2]);
     } else if (key == "max-sensor-fps") {
+        requireIdentifiedModel(dev, key);
         if (!dev.model().hasForceMaxFps) {
             die(std::string("force max sensor FPS is not available on ")
                 + dev.model().name);
         }
         cfg.power.setFlag(kForceMaxSensorFps, parseBool(args[2]));
+    } else if (key == "motion-jitter") {
+        requireIdentifiedModel(dev, key);
+        if (!dev.model().hasMotionJitter) {
+            die(std::string("motion jitter filter is not available on ")
+                + dev.model().name);
+        }
+        cfg.power.setFlag(kMotionJitterFilter, parseBool(args[2]));
     } else if (key == "slamclick") {
         cfg.power.setFlag(kSlamclickFilter, parseBool(args[2]));
     } else if (key == "multiclick") {
+        requireIdentifiedModel(dev, key);
+        if (!dev.model().hasMulticlickAck) {
+            die(std::string("the multiclick filter toggle is not available on ")
+                + dev.model().name);
+        }
         cfg.power.setFlag(kMulticlickFilter, parseBool(args[2]));
     } else if (key == "power-saving" || key == "deep-sleep") {
         const bool off = (args[2] == "off");

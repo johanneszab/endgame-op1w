@@ -25,7 +25,6 @@ struct DeviceInfo {
     uint16_t    usage     = 0;
     std::string product;
     bool        wired = false;
-    const ModelInfo* model = nullptr;   // never null once enumerate() filled it
 };
 
 struct Version {
@@ -78,8 +77,19 @@ public:
     bool isOpen() const { return dev_ != nullptr; }
 
     const DeviceInfo& info() const { return info_; }
-    const ModelInfo&  model() const { return modelFor(info_.productId); }
     std::string lastError() const;
+
+    // Which mouse is on the other end. Every wireless dongle enumerates as the
+    // same PID, so this comes from cmd 0x0E, not from USB. Until that succeeds
+    // — it fails while the mouse is asleep — this is kUnknownModel and every
+    // model-specific field is disabled.
+    const ModelInfo& model() const { return model_ ? *model_ : kUnknownModel; }
+    bool modelIdentified() const { return model_ != nullptr; }
+
+    // Asks the mouse for its own VID/PID and latches the matching entry from
+    // kModels. Called by open(), and worth re-calling after a link-up event if
+    // the mouse was asleep at startup.
+    bool identifyModel();
 
     // --- low level -------------------------------------------------------
     //
@@ -146,19 +156,26 @@ public:
     bool factoryReset();
 
 private:
+    bool requireModel(const char* what);
     bool sendReport(const uint8_t* buf, size_t len);
     bool getReport(uint8_t* buf, size_t len);
     void setError(std::string msg);
 
     hid_device*        dev_ = nullptr;
     DeviceInfo         info_;
+    const ModelInfo*   model_ = nullptr;   // null until cmd 0x0E identifies it
     mutable std::mutex mutex_;
     mutable std::mutex errorMutex_;
     std::string        error_;
 };
 
-// LOD is an index from 0.7 mm in 0.1 mm steps.
-uint8_t lodMillimetresToIndex(double mm);
-double  lodIndexToMillimetres(uint8_t index);
+// Lift-off distance conversion. The scale depends on the model — see
+// LodEncoding — so these take it explicitly rather than assuming v2.
+uint8_t lodMillimetresToIndex(double mm, LodEncoding enc);
+double  lodIndexToMillimetres(uint8_t index, LodEncoding enc);
+
+// The lift-off distances a model actually offers, in millimetres and in the
+// order its vendor tool lists them.
+std::vector<double> lodOptions(LodEncoding enc);
 
 }  // namespace egg

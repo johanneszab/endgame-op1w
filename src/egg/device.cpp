@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <thread>
 
@@ -56,16 +57,14 @@ void ensureHidInit()
 
 }  // namespace
 
-const ModelInfo& modelFor(uint16_t pid)
+const ModelInfo* modelForMousePid(uint16_t pid)
 {
     for (const ModelInfo& m : kModels) {
-        if (m.pid == pid) {
-            return m;
+        if (m.mousePid == pid) {
+            return &m;
         }
     }
-    // Unknown PID: assume the dongle's capabilities, which is the only set
-    // that has been verified against hardware.
-    return kModels[0];
+    return nullptr;
 }
 
 std::string Version::toString() const
@@ -83,8 +82,14 @@ std::vector<DeviceInfo> Device::enumerate()
     ensureHidInit();
 
     std::vector<DeviceInfo> found;
+    // The dongle, plus every model's own PID for when it is plugged in by cable.
+    std::vector<uint16_t> pids;
+    pids.push_back(kProductDongle);
     for (const ModelInfo& m : kModels) {
-        const uint16_t pid = m.pid;
+        pids.push_back(m.cabledPid);
+    }
+
+    for (uint16_t pid : pids) {
         hid_device_info* list = hid_enumerate(kVendorId, pid);
         for (hid_device_info* it = list; it; it = it->next) {
             DeviceInfo d;
@@ -95,8 +100,7 @@ std::vector<DeviceInfo> Device::enumerate()
             d.usagePage       = it->usage_page;
             d.usage           = it->usage;
             d.product         = narrow(it->product_string);
-            d.wired           = !m.isDongle;
-            d.model           = &m;
+            d.wired           = (pid != kProductDongle);
             if (!d.path.empty()) {
                 found.push_back(std::move(d));
             }
@@ -125,7 +129,7 @@ bool Device::open()
 {
     auto candidates = enumerate();
     if (candidates.empty()) {
-        setError("no Endgame Gear OP1w 4k v2 found (is the dongle plugged in?)");
+        setError("no Endgame Gear mouse or dongle found (is it plugged in?)");
         return false;
     }
 
@@ -134,7 +138,11 @@ bool Device::open()
             continue;
         }
         if (probe()) {
-            return true;  // it answered; this is the config collection
+            // Not fatal if this fails — the mouse may be asleep. model()
+            // stays kUnknownModel and model-specific writes stay disabled
+            // until a later identifyModel() succeeds.
+            identifyModel();
+            return true;
         }
         close();
     }
@@ -405,6 +413,44 @@ std::optional<Notification> Device::pollEvent()
     }
 }
 
+bool Device::identifyModel()
+{
+    // Cabled: the USB PID is the mouse's own, so no query is needed.
+    if (info_.wired) {
+        for (const ModelInfo& m : kModels) {
+            if (m.cabledPid == info_.productId) {
+                model_ = &m;
+                return true;
+            }
+        }
+    }
+
+    // Wireless: every dongle enumerates as 0x1970, so ask the mouse. Cmd 0x0E
+    // answers with its own VID at payload +0..+1 and PID at +2..+3.
+    Response r;
+    if (!command(Cmd::MouseInfo, Target::None, &r)) {
+        return false;   // mouse asleep or out of range
+    }
+
+    const uint16_t vid = static_cast<uint16_t>(r.payload()[0] | (r.payload()[1] << 8));
+    const uint16_t pid = static_cast<uint16_t>(r.payload()[2] | (r.payload()[3] << 8));
+    if (vid != kVendorId) {
+        setError("cmd 0x0E reported an unexpected vendor ID");
+        return false;
+    }
+
+    const ModelInfo* m = modelForMousePid(pid);
+    if (!m) {
+        char buf[64];
+        std::snprintf(buf, sizeof buf,
+                      "unrecognised mouse product ID 0x%04X", pid);
+        setError(buf);
+        return false;
+    }
+    model_ = m;
+    return true;
+}
+
 bool Device::mouseAwake()
 {
     // Cmd 0x0E targets the mouse; the dongle answers 0x0D either way.
@@ -412,8 +458,30 @@ bool Device::mouseAwake()
     return command(Cmd::MouseInfo, Target::None, &r);
 }
 
+// Refusing here costs little in practice: cmd 0x0E only fails while the mouse
+// is unreachable, and a write aimed at Target::Mouse would not have arrived
+// either. Once it wakes, reload() and the link-up handler both re-identify it.
+bool Device::requireModel(const char* what)
+{
+    if (model_) {
+        return true;
+    }
+    setError(std::string(what) + " cannot be written until the mouse is "
+             "identified: cmd 0x0E has not answered, which normally means it "
+             "is asleep. Wake it and retry. Both generations share one dongle "
+             "USB ID, and they encode lift-off distance on incompatible "
+             "scales, so writing this blind would corrupt it.");
+    return false;
+}
+
 bool Device::writeSensorBlock(const uint8_t* payload)
 {
+    // Whole-block write, and the block carries lift-off distance, whose scale
+    // differs between generations. There is no way to rewrite the CPI stages
+    // without also restating that byte, so this needs a known model.
+    if (!requireModel("sensor settings")) {
+        return false;
+    }
     Response r;
     return command(Cmd::WriteSensor, Target::Mouse, payload, kSensorPayload, 0, &r);
 }
@@ -424,11 +492,19 @@ bool Device::writePowerBlock(const uint8_t* payload)
     // vendor tool does. The eleventh byte carries sensor glass mode, and the
     // device does act on it.
     //
-    // The v1 models have no glass mode in their UI, so for those the eleventh
-    // byte is not sent at all and the declared length becomes the truth. That
-    // also explains why the field says ten: it is the v1 payload size, and v2
-    // appended a byte without updating it. **[?]** — not testable here.
-    const size_t len = model().hasGlassMode ? kPowerPayload : kPowerDeclaredLength;
+    // v1 writes ten bytes and declares ten; v2 writes eleven and still declares
+    // ten, the eleventh being sensor glass mode. That is why the length field
+    // reads low on v2: ten was the truth on v1, and v2 appended a byte without
+    // updating it. Confirmed in both vendor binaries.
+    //
+    // Guessing the length is not safe either way round: sending ten to a v2
+    // does not mean "omit glass mode", it means "glass mode off", because the
+    // report is zero-filled and the v2 acts on payload +10 regardless of the
+    // declared length.
+    if (!requireModel("polling and power settings")) {
+        return false;
+    }
+    const size_t len = model().powerPayloadLen;
 
     Response r;
     return command(Cmd::WritePower, Target::Mouse, payload, len, 0, &r,
@@ -463,15 +539,36 @@ bool Device::factoryReset()
 
 // ----------------------------------------------------------- conversions ---
 
-uint8_t lodMillimetresToIndex(double mm)
+uint8_t lodMillimetresToIndex(double mm, LodEncoding enc)
 {
+    if (enc == LodEncoding::Millimetres) {
+        // v1: the value is the millimetre count, and only 1 and 2 exist.
+        return static_cast<uint8_t>(std::clamp(
+            static_cast<int>(std::lround(mm)), 1, 2));
+    }
     const int idx = static_cast<int>(std::lround(mm * 10.0)) - 7;
     return static_cast<uint8_t>(std::clamp(idx, 0, 13));
 }
 
-double lodIndexToMillimetres(uint8_t index)
+double lodIndexToMillimetres(uint8_t index, LodEncoding enc)
 {
+    if (enc == LodEncoding::Millimetres) {
+        // The v1 tool displays anything unexpected as 1 mm, so match it.
+        return (index == 2) ? 2.0 : 1.0;
+    }
     return (static_cast<double>(index) + 7.0) / 10.0;
+}
+
+std::vector<double> lodOptions(LodEncoding enc)
+{
+    if (enc == LodEncoding::Millimetres) {
+        return {1.0, 2.0};
+    }
+    std::vector<double> v;
+    for (int i = 0; i <= 13; ++i) {
+        v.push_back((static_cast<double>(i) + 7.0) / 10.0);
+    }
+    return v;
 }
 
 }  // namespace egg

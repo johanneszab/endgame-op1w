@@ -77,7 +77,9 @@ int indexOfAction(const ButtonEntry& e)
 
 MainWindow::MainWindow()
 {
-    setWindowTitle(tr("Endgame Gear OP1w 4k v2"));
+    // Neutral until the mouse names itself; repopulateForModel() replaces this
+    // with the actual model. Hardcoding a model here would mislabel the other.
+    setWindowTitle(tr("Endgame Gear"));
 
     auto* central = new QWidget;
     auto* layout  = new QVBoxLayout(central);
@@ -92,6 +94,9 @@ MainWindow::MainWindow()
     setCentralWidget(central);
     statusLabel_ = new QLabel;
     statusBar()->addWidget(statusLabel_);
+
+    // Nothing has been read yet, so nothing may be written yet.
+    setConfigLoaded(false);
 
     // The dongle pushes a notification when the radio link changes state, so
     // nothing here is polled over USB. This timer only drains the local hidraw
@@ -167,10 +172,9 @@ QWidget* MainWindow::buildBasicTab()
     auto* layout = new QVBoxLayout(page);
     auto* form   = new QFormLayout;
 
+    // Filled by repopulateForModel(): the two generations offer different
+    // lift-off distances on incompatible scales.
     lodBox_ = new QComboBox;
-    for (int i = 0; i <= 13; ++i) {
-        lodBox_->addItem(QString::number(lodIndexToMillimetres(i), 'f', 1) + " mm", i);
-    }
     form->addRow(tr("Lift-off distance:"), lodBox_);
 
     cpiLevelsBox_ = new QComboBox;
@@ -239,6 +243,7 @@ QWidget* MainWindow::buildBasicTab()
     layout->addWidget(cpiBox);
 
     auto* apply = new QPushButton(tr("Apply"));
+    applySensorBtn_ = apply;
     connect(apply, &QPushButton::clicked, this, &MainWindow::applySensor);
     layout->addStretch();
     layout->addWidget(apply, 0, Qt::AlignRight);
@@ -251,15 +256,13 @@ QWidget* MainWindow::buildAdvancedTab()
     auto* layout = new QVBoxLayout(page);
     auto* form   = new QFormLayout;
 
+    // Filled by repopulateForModel(): only the v2 generation offers the
+    // power-saving and office-mode variants.
     pollingBox_ = new QComboBox;
-    for (const auto& o : pollingOptions()) {
-        pollingBox_->addItem(QString::fromUtf8(o.label),
-                             static_cast<int>(static_cast<uint8_t>(o.mode)));
-    }
     pollingBox_->setToolTip(
         tr("Wireless power saving is only available at 1000 Hz and below, which "
-           "is why 1000 Hz appears twice. This is separate from the inactivity "
-           "timeouts below."));
+           "is why 1000 Hz can appear twice. This is separate from the "
+           "inactivity timeouts below."));
     form->addRow(tr("Polling rate:"), pollingBox_);
 
     angleTuningBox_ = new QSpinBox;
@@ -267,9 +270,13 @@ QWidget* MainWindow::buildAdvancedTab()
     angleTuningBox_->setSuffix(tr(" °"));
     form->addRow(tr("Sensor angle tuning:"), angleTuningBox_);
 
-    motionSyncBox_  = new QCheckBox(tr("Motion sync"));
-    forceMaxFpsBox_ = new QCheckBox(tr("Force max sensor FPS"));
-    glassModeBox_   = new QCheckBox(tr("Sensor glass mode"));
+    motionSyncBox_   = new QCheckBox(tr("Motion sync"));
+    forceMaxFpsBox_  = new QCheckBox(tr("Force max sensor FPS"));
+    glassModeBox_    = new QCheckBox(tr("Sensor glass mode"));
+    motionJitterBox_ = new QCheckBox(tr("Motion jitter filter"));
+    motionJitterBox_->setToolTip(
+        tr("Present on the v1 generation only. The v2 models replaced it with "
+           "the sensor options beside it."));
     slamclickBox_   = new QCheckBox(tr("Slamclick filter"));
     multiclickBox_  = new QCheckBox(tr("Multiclick filter"));
     multiclickBox_->setToolTip(
@@ -285,6 +292,7 @@ QWidget* MainWindow::buildAdvancedTab()
     auto* filters = new QHBoxLayout;
     filters->addWidget(slamclickBox_);
     filters->addWidget(multiclickBox_);
+    filters->addWidget(motionJitterBox_);
     filters->addStretch();
 
     auto* powerRow = new QHBoxLayout;
@@ -336,6 +344,7 @@ QWidget* MainWindow::buildAdvancedTab()
     layout->addWidget(filterBox);
 
     auto* apply = new QPushButton(tr("Apply"));
+    applyPowerBtn_ = apply;
     connect(apply, &QPushButton::clicked, this, &MainWindow::applyPower);
     layout->addStretch();
     layout->addWidget(apply, 0, Qt::AlignRight);
@@ -375,6 +384,7 @@ QWidget* MainWindow::buildButtonsTab()
            "“(custom)”; picking another action replaces them.")));
 
     auto* apply = new QPushButton(tr("Apply"));
+    applyButtonsBtn_ = apply;
     connect(apply, &QPushButton::clicked, this, &MainWindow::applyButtons);
     layout->addStretch();
     layout->addWidget(apply, 0, Qt::AlignRight);
@@ -387,36 +397,50 @@ void MainWindow::reload()
 {
     setBusy(true);
 
+    // Retry identification first: the mouse may have been asleep at startup,
+    // and the unidentified-model message tells the user to press Reload.
+    if (!device_.modelIdentified()) {
+        device_.identifyModel();
+    }
+
     std::array<uint8_t, kBlobSize> blob{};
     if (!device_.readConfigBlob(blob)) {
+        // Nothing was loaded, so the widgets do not describe the device. Keep
+        // Apply disabled rather than let it write whatever they happen to hold.
+        setConfigLoaded(false);
         setBusy(false);
         report(QString::fromStdString(device_.lastError()), true);
         return;
     }
     config_ = decodeBlob(blob);
 
-    // Three sensor features exist only on the v2 models. Over the dongle the
-    // model cannot be identified at all — every wireless tool opens the same
-    // PID — so the capabilities there are the verified v2 set. See
-    // PROTOCOL.md section 10.
-    const ModelInfo& m = device_.model();
-    setWindowTitle(QString::fromUtf8(m.name));
-    angleTuningBox_->setEnabled(m.hasAngleTuning);
-    glassModeBox_->setEnabled(m.hasGlassMode);
-    forceMaxFpsBox_->setEnabled(m.hasForceMaxFps);
-
+    repopulateForModel();
     refreshInfo();
     populate();
+    setConfigLoaded(true);
     setBusy(false);
-    report(tr("Configuration loaded."));
+
+    if (device_.modelIdentified()) {
+        report(tr("Configuration loaded."));
+    } else {
+        report(tr("Configuration loaded, but the mouse is not identified — move "
+                  "it to wake it, then press Reload. Lift-off distance and "
+                  "polling rate cannot be written until then."), true);
+    }
 }
 
 void MainWindow::populate()
 {
     populating_ = true;
 
-    lodBox_->setCurrentIndex(lodBox_->findData(config_.sensor.lodIndex));
-    cpiLevelsBox_->setCurrentIndex(cpiLevelsBox_->findData(config_.sensor.cpiLevels));
+    // A byte the device holds that this model's list does not offer must still
+    // round-trip: dropping to index 0 would rewrite it on the next Apply, and
+    // an unmatched findData() would leave the box blank and harvest 0.
+    selectOrAdd(lodBox_, config_.sensor.lodIndex,
+                tr("0x%1 (not offered by this model)")
+                    .arg(config_.sensor.lodIndex, 2, 16, QLatin1Char('0')));
+    selectOrAdd(cpiLevelsBox_, config_.sensor.cpiLevels,
+                tr("%1 (unexpected)").arg(config_.sensor.cpiLevels));
     angleSnapBox_->setChecked(config_.sensor.angleSnapping);
     rippleBox_->setChecked(config_.sensor.rippleControl);
     ledLiftOffBox_->setChecked(config_.sensor.ledOnLiftOff);
@@ -437,8 +461,11 @@ void MainWindow::populate()
         stageButton_[config_.sensor.activeStage]->setChecked(true);
     }
 
-    const int pollIdx = pollingBox_->findData(static_cast<int>(config_.power.pollingMode));
-    pollingBox_->setCurrentIndex(pollIdx >= 0 ? pollIdx : 0);
+    // Same reasoning: a v2 sitting at 0x80 must not be silently rewritten to
+    // 4000 Hz just because this model's option list does not include it.
+    selectOrAdd(pollingBox_, static_cast<int>(config_.power.pollingMode),
+                tr("%1 (not offered by this model)")
+                    .arg(QString::fromUtf8(pollingLabel(config_.power.pollingMode))));
 
     angleTuningBox_->setValue(config_.sensor.angleTuning);
     motionSyncBox_->setChecked(config_.power.motionSync);
@@ -446,6 +473,7 @@ void MainWindow::populate()
     forceMaxFpsBox_->setChecked(config_.power.forceMaxFps());
     slamclickBox_->setChecked(config_.power.slamclick());
     multiclickBox_->setChecked(config_.power.multiclick());
+    motionJitterBox_->setChecked(config_.power.motionJitter());
 
     powerSavingBox_->setChecked(config_.power.powerSavingEnabled);
     powerSavingMin_->setValue(config_.power.powerSavingMinutes);
@@ -512,9 +540,19 @@ void MainWindow::harvestPower()
     config_.power.pollingMode = static_cast<uint8_t>(pollingBox_->currentData().toInt());
     config_.power.motionSync  = motionSyncBox_->isChecked();
     config_.power.glassMode   = glassModeBox_->isChecked();
-    config_.power.setFlag(kForceMaxSensorFps, forceMaxFpsBox_->isChecked());
-    config_.power.setFlag(kSlamclickFilter,   slamclickBox_->isChecked());
-    config_.power.setFlag(kMulticlickFilter,  multiclickBox_->isChecked());
+    // Only touch bits this model actually implements, so a flag belonging to
+    // the other generation is preserved rather than cleared.
+    const ModelInfo& m = device_.model();
+    config_.power.setFlag(kSlamclickFilter, slamclickBox_->isChecked());
+    if (m.hasForceMaxFps) {
+        config_.power.setFlag(kForceMaxSensorFps, forceMaxFpsBox_->isChecked());
+    }
+    if (m.hasMulticlickAck) {
+        config_.power.setFlag(kMulticlickFilter, multiclickBox_->isChecked());
+    }
+    if (m.hasMotionJitter) {
+        config_.power.setFlag(kMotionJitterFilter, motionJitterBox_->isChecked());
+    }
 
     config_.power.powerSavingEnabled = powerSavingBox_->isChecked();
     config_.power.powerSavingMinutes = static_cast<uint8_t>(powerSavingMin_->value());
@@ -657,6 +695,67 @@ void MainWindow::promptFixedCpi(int buttonIndex)
                .arg(buttonName(buttonIndex), QString::fromStdString(e.describe())));
 }
 
+void MainWindow::repopulateForModel()
+{
+    const ModelInfo& m = device_.model();
+    const bool known = device_.modelIdentified();
+
+    setWindowTitle(known ? QString::fromUtf8(m.name)
+                         : tr("Endgame Gear — mouse not identified"));
+
+    // Lift-off distance: v1 offers 1 and 2 mm; v2 offers 0.7–2.0 mm in 0.1 mm
+    // steps, and the byte means different things on each. Rebuild rather than
+    // filter, and do not try to carry the old selection across — the rows mean
+    // something different afterwards. populate() sets the selection from the
+    // device immediately after.
+    lodBox_->clear();
+    for (double mm : lodOptions(m.lod)) {
+        lodBox_->addItem(QString::number(mm, 'f', 1) + tr(" mm"),
+                         lodMillimetresToIndex(mm, m.lod));
+    }
+
+    pollingBox_->clear();
+    for (const auto& o : pollingOptions(m)) {
+        pollingBox_->addItem(QString::fromUtf8(o.label),
+                             static_cast<int>(static_cast<uint8_t>(o.mode)));
+    }
+
+    angleTuningBox_->setEnabled(m.hasAngleTuning);
+    glassModeBox_->setEnabled(m.hasGlassMode);
+    forceMaxFpsBox_->setEnabled(m.hasForceMaxFps);
+    multiclickBox_->setEnabled(m.hasMulticlickAck);
+    motionJitterBox_->setEnabled(m.hasMotionJitter);
+
+    // Until cmd 0x0E names the mouse we do not know which lift-off scale or
+    // polling set applies. The device layer refuses those writes outright;
+    // greying the inputs just makes that visible before the user tries.
+    lodBox_->setEnabled(known);
+    pollingBox_->setEnabled(known);
+}
+
+// The widgets only describe the device once a config blob has been read.
+// Before that — or after a failed reload — Apply would write whatever they
+// happen to hold, so it stays disabled.
+void MainWindow::setConfigLoaded(bool loaded)
+{
+    if (applySensorBtn_)  applySensorBtn_->setEnabled(loaded);
+    if (applyPowerBtn_)   applyPowerBtn_->setEnabled(loaded);
+    if (applyButtonsBtn_) applyButtonsBtn_->setEnabled(loaded);
+}
+
+// Selects `value` in `box`, adding a row for it if the model's own list does
+// not contain it. That keeps a byte the device already holds round-tripping
+// unchanged instead of silently collapsing to the first entry.
+void MainWindow::selectOrAdd(QComboBox* box, int value, const QString& fallbackLabel)
+{
+    int i = box->findData(value);
+    if (i < 0) {
+        box->addItem(fallbackLabel, value);
+        i = box->count() - 1;
+    }
+    box->setCurrentIndex(i);
+}
+
 void MainWindow::showAsleep()
 {
     mouseFwLabel_->setText(tr("—"));
@@ -678,6 +777,14 @@ void MainWindow::pollEvents()
         } else if (ev->isLinkState()) {
             if (ev->linkUp()) {
                 report(tr("Mouse woke up."));
+                // If it was asleep at startup we could not identify it. Now we
+                // can — and a full reload is needed, not just a repopulate:
+                // the widgets must be refilled from a freshly read blob, or
+                // the next Apply would write stale defaults.
+                if (!device_.modelIdentified() && device_.identifyModel()) {
+                    reload();
+                    continue;
+                }
                 refreshInfo();
             } else {
                 showAsleep();

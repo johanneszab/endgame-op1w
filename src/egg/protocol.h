@@ -4,6 +4,7 @@
 // "unconfirmed" there is not relied upon here.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace egg {
@@ -18,31 +19,63 @@ inline constexpr uint16_t kVendorId = 0x3367;
 // it**. See PROTOCOL.md section 10.
 inline constexpr uint16_t kProductDongle = 0x1970;
 
-// What a model can do. The three v2-only sensor features are absent from the
-// v1 tools' UI, so a v1 device is assumed not to implement them.
+// How a model encodes cmd 0x14 payload +2, the lift-off distance. The two
+// generations use genuinely different scales, not offset variants: under v1's
+// encoding the bytes 1 and 2 mean 1.0 mm and 2.0 mm, whereas under v2's they
+// would mean 0.8 mm and 0.9 mm. No value is safe under both readings.
+enum class LodEncoding {
+    Millimetres,   // v1: value = millimetres, only 1 and 2 exist
+    TenthsFrom07,  // v2: value = round(mm * 10) - 7, i.e. 0.7 .. 2.0 mm
+};
+
+// What a model implements. The generations differ in more than a missing
+// checkbox or two — see PROTOCOL.md section 12.
 struct ModelInfo {
-    uint16_t    pid;
+    uint16_t    mousePid;   // as reported by cmd 0x0E payload +2..+3
+    uint16_t    cabledPid;  // its own USB PID when plugged in by cable
     const char* name;
-    bool        isDongle;
-    bool        hasAngleTuning;    // cmd 0x14 payload +5
-    bool        hasGlassMode;      // cmd 0x15 payload +10, the undeclared byte
-    bool        hasForceMaxFps;    // cmd 0x15 flags bit 6
+
+    LodEncoding lod;
+    uint8_t     powerPayloadLen;   // bytes actually written for cmd 0x15
+
+    bool hasAngleTuning;        // cmd 0x14 payload +5
+    bool hasGlassMode;          // cmd 0x15 payload +10, the undeclared byte
+    bool hasMotionJitter;       // cmd 0x15 flags bit 4 — v1 only
+    bool hasMulticlickAck;      // cmd 0x15 flags bit 5 — v2 only
+    bool hasForceMaxFps;        // cmd 0x15 flags bit 6 — v2 only
+    bool hasPowerSavePolling;   // polling values 0x40 and 0x80 — v2 only
 };
 
-// Every PID any of the four wireless tools opens. The non-dongle entries are
-// the mouse's own identity when it is plugged in by cable. Only 0x1984 has
-// been verified against hardware. **[?]**
+// Keyed by the PID the mouse reports through cmd 0x0E, which is the only
+// signal that distinguishes the models: every wireless dongle enumerates as
+// 0x1970 regardless of which mouse is paired to it.
+//
+// OP1w 4k and OP1w 4k v2 are confirmed against hardware. The two XM2w entries
+// are extrapolated from their vendor tools, which are the same builds as the
+// corresponding OP1w tools with different constants. **[?]**
 inline constexpr ModelInfo kModels[] = {
-    {0x1970, "Endgame Gear HS Dongle", true,  true,  true,  true },
-    {0x1968, "XM2w 4k (wired)",        false, false, false, false},
-    {0x1972, "OP1w 4k (wired)",        false, false, false, false},
-    {0x1982, "XM2w 4k v2 (wired)",     false, true,  true,  true },
-    {0x1984, "OP1w 4k v2 (wired)",     false, true,  true,  true },
+    // mousePid cabledPid name                lod                        len  tune   glass  jitter ack    maxfps psPoll
+    {  0x1972,  0x1972,  "OP1w 4k",          LodEncoding::Millimetres,   10,  false, false, true,  false, false, false },
+    {  0x1984,  0x1984,  "OP1w 4k v2",       LodEncoding::TenthsFrom07,  11,  true,  true,  false, true,  true,  true  },
+    {  0x1968,  0x1968,  "XM2w 4k",          LodEncoding::Millimetres,   10,  false, false, true,  false, false, false },
+    {  0x1982,  0x1982,  "XM2w 4k v2",       LodEncoding::TenthsFrom07,  11,  true,  true,  false, true,  true,  true  },
 };
 
-// Falls back to the full v2 feature set for an unknown PID, which is what the
-// only hardware-verified model supports.
-const ModelInfo& modelFor(uint16_t pid);
+// Returned when cmd 0x0E has not identified the mouse — typically because it
+// is asleep. Everything model-specific is disabled: with two incompatible LOD
+// scales in play, guessing would write a wrong lift-off distance.
+//
+// Its powerPayloadLen is never actually used: Device::writePowerBlock refuses
+// before it reaches the length decision. Do not "simplify" by dropping that
+// guard and leaning on this value — sending ten bytes to a v2 does not omit
+// sensor glass mode, it turns it off.
+inline constexpr ModelInfo kUnknownModel{
+    0x0000, 0x0000, "unknown", LodEncoding::TenthsFrom07, 10,
+    false, false, false, false, false, false
+};
+
+// Null if the PID is not one we know.
+const ModelInfo* modelForMousePid(uint16_t pid);
 
 // The configuration channel is the vendor collection with this usage.
 inline constexpr uint16_t kUsagePage = 0xFF01;
@@ -81,7 +114,10 @@ inline constexpr uint8_t kStatusBusy = 0x03;
 
 enum class Cmd : uint8_t {
     DongleInfo   = 0x0D,  // read 14 B: firmware version at +0..+1
-    MouseInfo    = 0x0E,  // read 14 B: address at +0..+5, firmware at +6..+7
+    // read 14 B: the mouse's own VID at +0..+1 and PID at +2..+3, then +4..+5
+    // (PID-1, unidentified) and firmware at +6..+7. The PID is the only way to
+    // tell the models apart over the shared dongle — see identifyModel().
+    MouseInfo    = 0x0E,
     Probe        = 0x0F,  // liveness probe / target select, no payload
     ReadConfig   = 0x12,  // read 1024 B config blob, via report 0xA0
     FactoryReset = 0x13,  // no payload. NOT a commit.
@@ -132,6 +168,7 @@ enum class PollingMode : uint8_t {
 
 enum PowerFlag : uint8_t {
     kSlamclickFilter   = 1u << 0,
+    kMotionJitterFilter = 1u << 4,  // v1 only
     kMulticlickFilter  = 1u << 5,   // the "I understand..." acknowledgement
     kForceMaxSensorFps = 1u << 6,
 };

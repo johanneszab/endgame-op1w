@@ -1,13 +1,32 @@
 # endgame-op1w
 
-A Linux configuration tool for the **Endgame Gear OP1w 4k v2** wireless mouse —
-an independent implementation of the protocol used by the vendor's Windows-only
-tool, reverse-engineered for interoperability.
+A Linux configuration tool for **Endgame Gear wireless mice** — an independent
+implementation of the protocol used by the vendor's Windows-only tool,
+reverse-engineered for interoperability.
 
 Protocol documentation: [`re/PROTOCOL.md`](re/PROTOCOL.md).
 
-This tool might work for the OP1w v1, and the wireless XM2 tools as well. I
-lack the hardware to test it though.
+## Supported models
+
+| Model | Status |
+|---|---|
+| OP1w 4k v2 | verified on hardware |
+| OP1w 4k (v1) | verified on hardware |
+| XM2w 4k v2 | should work — untested, no hardware |
+| XM2w 4k (v1) | should work — untested, no hardware |
+
+The two generations differ in more than a few checkboxes: **lift-off distance
+uses incompatible scales** (v1 is whole millimetres, 1 or 2; v2 is 0.7–2.0 mm in
+0.1 mm steps), the polling options differ, and one filter flag bit moved. The
+tool therefore identifies the mouse before writing anything model-specific.
+
+That identification is not from USB — every wireless dongle enumerates as the
+same `3367:1970` regardless of which mouse is paired to it. It comes from cmd
+`0x0E`, which reports the mouse's own product ID. While the mouse is asleep
+that query fails, so lift-off distance and polling rate stay disabled until it
+wakes; everything else works meanwhile.
+
+Only one mouse-and-dongle pair should be connected at a time.
 
 __Note__: The code is completely vibe coded with Opus 5. Thus, if you submit
 any changes/updates, or tested with the XM2, I am likely to accept the change.
@@ -19,9 +38,11 @@ captured every settings change myself with [pcap](https://www.winpcap.org/).
 Everything the vendor tool exposes, except firmware update:
 
 - **CPI** — 4 stages, independent X/Y, stage count, active stage
-- **Sensor** — lift-off distance (0.7–2.0 mm), angle snapping, ripple control,
-  angle tuning, motion sync, glass mode, force max sensor FPS
-- **Polling** — 4000 / 2000 / 1000 Hz, and 1000 Hz with wireless power saving
+- **Sensor** — lift-off distance, angle snapping, ripple control, motion sync,
+  plus angle tuning / glass mode / force max sensor FPS on v2, and the motion
+  jitter filter on v1
+- **Polling** — 4000 / 2000 / 1000 Hz, plus 1000 Hz with wireless power saving
+  and 125 Hz office mode on v2
 - **Power** — power-saving and deep-sleep inactivity timeouts (1–120 min)
 - **Clicks** — slamclick filter, multiclick filter, per-button filter value,
   and the SPDT GX Safe / GX Speed modes on the left and right buttons
@@ -122,14 +143,18 @@ The protocol layer is derived from static analysis, 43 USB captures and
 hardware verification; every decoded value was checked against the vendor
 tool's own UI, and the writable ones round-trip through the device.
 
-**Builds and runs against live hardware** — OP1w 4k v2, mouse firmware 1.07 /
-dongle 1.01.
+**Builds and runs against live hardware** — OP1w 4k v2 (mouse firmware 1.07)
+and OP1w 4k v1 (firmware 1.08), both on dongle firmware 1.01.
 
-Other models: `kModels` in `src/egg/protocol.h` carries the PIDs for the OP1w
-4k, XM2w 4k and XM2w 4k v2, extracted from their vendor tools, along with
-per-model capability flags. **None of those three has been tested** — and over
-the dongle the model cannot be identified at all, since all four wireless mice
-share PID `0x1970`. See `../re/PROTOCOL.md` §10.
+The two XM2w models are in `kModels` (`src/egg/protocol.h`) with PIDs and
+capability flags taken from their vendor tools, which are the same builds as
+the OP1w ones with different constants. **Neither has been tested** — if you
+own one, reports are welcome.
+
+Model identification comes from cmd `0x0E`, not from USB: every wireless dongle
+enumerates as `3367:1970`. While the mouse is asleep that query fails, and the
+device layer then refuses any write whose encoding depends on the model, rather
+than guessing. See [`re/PROTOCOL.md`](re/PROTOCOL.md) §12.
 
 Not implemented: firmware update (commands not investigated), and the
 `0x71`/`0x72` pairing commands, which exist in the vendor binary but are

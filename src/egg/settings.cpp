@@ -141,25 +141,32 @@ uint8_t filterRawFor(ButtonFilterMode mode, uint8_t count)
     return static_cast<uint8_t>(std::clamp<int>(count, 1, 15));
 }
 
-const std::vector<PollingOption>& pollingOptions()
+std::vector<PollingOption> pollingOptions(const ModelInfo& model)
 {
-    // Listed high to low, matching the vendor dropdown.
-    static const std::vector<PollingOption> options = {
-        {PollingMode::Hz4000,          4000, "4000 Hz"},
-        {PollingMode::Hz2000,          2000, "2000 Hz"},
-        {PollingMode::Hz1000,          1000, "1000 Hz"},
-        {PollingMode::Hz1000PowerSave, 1000, "1000 Hz (power saving)"},
-        {PollingMode::Hz125Office,      125, "125 Hz (office mode)"},
+    // Listed high to low, matching the vendor dropdowns. The first three are
+    // common to both generations and use the same 8000/rate divisor values.
+    std::vector<PollingOption> options = {
+        {PollingMode::Hz4000, 4000, "4000 Hz"},
+        {PollingMode::Hz2000, 2000, "2000 Hz"},
+        {PollingMode::Hz1000, 1000, "1000 Hz"},
     };
+    if (model.hasPowerSavePolling) {
+        options.push_back({PollingMode::Hz1000PowerSave, 1000, "1000 Hz (power saving)"});
+        options.push_back({PollingMode::Hz125Office,      125, "125 Hz (office mode)"});
+    }
     return options;
 }
 
 const char* pollingLabel(uint8_t raw)
 {
-    for (const auto& o : pollingOptions()) {
-        if (static_cast<uint8_t>(o.mode) == raw) {
-            return o.label;
-        }
+    // Labels are model-independent: a value read off a device is named the
+    // same whichever model produced it, even if this model could not write it.
+    switch (static_cast<PollingMode>(raw)) {
+    case PollingMode::Hz4000:          return "4000 Hz";
+    case PollingMode::Hz2000:          return "2000 Hz";
+    case PollingMode::Hz1000:          return "1000 Hz";
+    case PollingMode::Hz1000PowerSave: return "1000 Hz (power saving)";
+    case PollingMode::Hz125Office:     return "125 Hz (office mode)";
     }
     return "unknown";
 }
