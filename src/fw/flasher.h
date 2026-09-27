@@ -78,7 +78,8 @@ private:
     // destination, from Start and Complete, where it is not established.
     bool transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
                   bool retryOnBadReply, uint16_t expectIndex = 0,
-                  uint16_t expectSum = 0, bool checkEcho = false);
+                  uint16_t expectSum = 0, bool checkEcho = false,
+                  bool checkPrefix = true);
     bool echoTest(const uint8_t* firstBlock);
     bool enterBootloader();
     bool sendStart(size_t blocks);

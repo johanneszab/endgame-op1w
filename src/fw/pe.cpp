@@ -70,7 +70,14 @@ bool parsePe(const std::vector<uint8_t>& d, Pe* pe, std::string* why)
     const uint16_t nsec = u16(d, fh + 2);
     const uint16_t sizeopt = u16(d, fh + 16);
     const size_t opt = fh + 20;
-    if (!have(d, opt, sizeopt)) { *why = "truncated optional header"; return false; }
+    // Bound by what is actually READ, not by what the header claims: imagebase
+    // sits at +28 and the data directories at +0x5C, and u16/u32 do not bounds
+    // check. A malformed .exe with a small SizeOfOptionalHeader would otherwise
+    // read past the buffer -- from `verify`, the command users are told is safe.
+    if (!have(d, opt, sizeopt) || sizeopt < 0x60 || !have(d, opt, 0x60)) {
+        *why = "optional header is truncated or too small to be a 32-bit PE";
+        return false;
+    }
 
     const uint16_t magic = u16(d, opt);
     const bool pe32p = (magic == 0x20B);

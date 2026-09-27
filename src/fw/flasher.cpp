@@ -253,20 +253,50 @@ bool Flasher::reportRoutable()
 
 void Flasher::tryOpen(uint16_t pid)
 {
+    // RANK the nodes, then confirm by asking the device — do not filter on the
+    // descriptor alone. Two reasons:
+    //
+    //  - Reports 0xA0/0xA1 live on exactly one node of the application device.
+    //    Opening the first that accepts a handle picks the plain mouse
+    //    collection and every feature report is refused.
+    //  - The bootloader has a SINGLE interface, numbered 0 (FIRMWARE.md §9),
+    //    and its report descriptor has never been read. An earlier version of
+    //    this function fell back to `interface_number == 1`, which the
+    //    bootloader can never satisfy — so a mouse that had just been put into
+    //    DFU could not be opened, by the tool that put it there.
+    //
+    // The hard VID/PID gate in openPid() has already excluded the dongle, so
+    // considering every node of this PID is not FIRMWARE.md §5's hazard.
     hid_device_info* list = hid_enumerate(kVendorId, pid);
-    for (int pass = 0; pass < 2 && !dev_; ++pass) {
+
+    const char* fallbackPath = nullptr;
+    for (int rank = 0; rank < 3 && !dev_; ++rank) {
         for (hid_device_info* it = list; it; it = it->next) {
-            const bool vendorCollection =
-                it->usage_page == kVendorUsagePage && it->usage == kVendorUsage;
-            // Second pass: hidapi cannot always report usage (older Linux
-            // builds leave it zero), so fall back to the interface the vendor
-            // collection lives on rather than giving up.
-            const bool acceptable = pass == 0 ? vendorCollection
-                                              : (it->usage_page == 0 && it->interface_number == 1);
-            if (!acceptable) continue;
-            if (hid_device* d = hid_open_path(it->path)) { dev_ = d; break; }
+            const int thisRank =
+                (it->usage_page == kVendorUsagePage && it->usage == kVendorUsage) ? 0
+              : (it->interface_number == kVendorInterface)                        ? 1
+                                                                                  : 2;
+            if (thisRank != rank) continue;
+            hid_device* d = hid_open_path(it->path);
+            if (!d) continue;
+            if (!fallbackPath) fallbackPath = it->path;
+            dev_ = d;
+            // The acceptance test is functional: can this node actually carry
+            // report 0xA0? That settles it without trusting a descriptor.
+            if (reportRoutable()) {
+                if (list) hid_free_enumeration(list);
+                return;
+            }
+            close();
         }
     }
+
+    // Nothing answered the probe. Rather than give up — which would strand a
+    // mouse in DFU — fall back to the best-ranked node that at least opened.
+    // A fresh bootloader with no held response may legitimately not answer an
+    // unsolicited read (CLAUDE.md invariant 6), and this is never worse than
+    // choosing on the descriptor alone.
+    if (fallbackPath) dev_ = hid_open_path(fallbackPath);
     if (list) hid_free_enumeration(list);
 }
 
@@ -290,10 +320,12 @@ bool Flasher::waitFor(uint16_t pid, int timeoutMs)
 
 bool Flasher::transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
                        bool retryOnBadReply, uint16_t expectIndex,
-                       uint16_t expectSum, bool checkEcho)
+                       uint16_t expectSum, bool checkEcho, bool checkPrefix)
 {
-    if (opt_.dryRun) return true;
-
+    // No dry-run gate here on purpose. The echo test writes nothing and is the
+    // only proof the transport carries a 1024-byte payload, so a rehearsal has
+    // to actually perform it. Everything that changes device state is gated in
+    // its own sender instead.
     const int attempts = retryOnBadReply ? kBlockAttempts : 1;
     for (int attempt = 1; attempt <= attempts; ++attempt) {
         const int written = hid_send_feature_report(dev_, report, kBldrReportSize);
@@ -319,8 +351,26 @@ bool Flasher::transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
             sleepMs(kBusyRetryMs * b);
         }
         if (busy) {
-            setError("device stayed busy (status 0x04) through every retry");
-            return false;
+            setError("device stayed busy (status 0x04) through every re-read");
+            // Spend the caller's attempt budget rather than short-circuiting
+            // it: for a block, a resend is safe and idempotent, and a device
+            // that is slow to erase a page is exactly what this is for.
+            if (!retryOnBadReply) return false;
+            sleepMs(kBlockRetryMs);
+            continue;
+        }
+        if (read < 0) {
+            // A lost or late reply is re-READ, never re-sent: a second
+            // GET_REPORT is harmless, a second state-changing command is not.
+            // Start matters most here — the capture shows the device holding
+            // that reply 3.9 s while it erases, against a 5 s kernel control
+            // timeout, so a slightly slower erase must not look like a refusal.
+            for (int again = 1; again <= kSlowReplyAttempts && read < 0; ++again) {
+                sleepMs(kSlowReplyMs);
+                std::memset(buf, 0, sizeof buf);
+                buf[0] = kBldrReportId;
+                read = hid_get_feature_report(dev_, buf, sizeof buf);
+            }
         }
         if (read < 0) {
             setErrorHid("no reply");
@@ -345,7 +395,7 @@ bool Flasher::transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
         // else means we are not talking to what we think we are -- or are
         // reading a held response rather than a fresh one (CLAUDE.md
         // invariant 6). Either way, do not act on it.
-        if (buf[0] != kReplyPrefix) {
+        if (checkPrefix && buf[0] != kReplyPrefix) {
             char b[96];
             std::snprintf(b, sizeof b,
                           "reply began 0x%02X, expected 0x%02X", buf[0], kReplyPrefix);
@@ -402,12 +452,17 @@ bool Flasher::echoTest(const uint8_t* firstBlock)
     r[2] = 0x01;
     std::memcpy(r + kPayload, firstBlock, kBlockBytes);
 
+    // No echo reply has ever been captured -- the one real update came in
+    // through the recovery branch, which skips this step -- so byte 0 of an
+    // echo reply is pure inference. Checking it would be STRICTER than the
+    // vendor, which looks at the status and the payload only (FIRMWARE.md
+    // section 3 step (c)), and a wrong guess here would fail after the mouse
+    // is already in DFU. Verify what the vendor verifies, nothing more.
     uint8_t reply[kBldrReportSize];
-    if (!transact(Cmd::Echo, r, reply, true)) {
+    if (!transact(Cmd::Echo, r, reply, true, 0, 0, false, /*checkPrefix=*/false)) {
         setError("the echo test did not come back: " + error_);
         return false;
     }
-    if (opt_.dryRun) return true;
     if (std::memcmp(reply + kPayload, firstBlock, kBlockBytes) != 0) {
         setError("the echo test came back altered — the transport to this "
                  "device is not carrying 1024-byte payloads intact, and "
@@ -457,6 +512,7 @@ bool Flasher::sendStart(size_t blocks)
     r[1] = static_cast<uint8_t>(Cmd::Start);
     // Only the low byte is sent; inspectImage() has already refused anything
     // that would not fit.
+    if (opt_.dryRun) return true;
     r[kPayload] = static_cast<uint8_t>(blocks & 0xFF);
     // Payload +1..+4 is an uninitialised stack member in the vendor tool -- the
     // capture shows it sending a stack address, and the device accepted it. We
@@ -473,6 +529,19 @@ bool Flasher::sendBlock(size_t i, const uint8_t* data)
 {
     const uint16_t index = static_cast<uint16_t>(kFirstBlockIndex + i);
     const uint16_t sum   = checksum(data, kBlockBytes);
+
+    // Belt and braces against a future change to the image-size rule. Never
+    // emit an index outside the range the vendor flow uses: below it lies the
+    // bootloader, above it flash nobody has mapped, and neither has a fallback.
+    if (index < kFirstBlockIndex || index > kLastBlockIndex) {
+        char b[128];
+        std::snprintf(b, sizeof b,
+                      "refusing to write block %zu at index 0x%04X, outside the "
+                      "range 0x%04X..0x%04X", i, index, kFirstBlockIndex, kLastBlockIndex);
+        setError(b);
+        return false;
+    }
+    if (opt_.dryRun) return true;
 
     uint8_t r[kBldrReportSize] = {};
     r[0] = kBldrReportId;
@@ -493,6 +562,7 @@ bool Flasher::sendComplete()
     uint8_t r[kBldrReportSize] = {};
     r[0] = kBldrReportId;
     r[1] = static_cast<uint8_t>(Cmd::Complete);
+    if (opt_.dryRun) return true;
     return transact(Cmd::Complete, r, nullptr, /*retryOnBadReply=*/false);
 }
 
@@ -562,6 +632,13 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
     }
 
     if (!openPid(opt_.target->bldrPid, kBootloaderWaitMs)) return false;
+    if (!reportRoutable()) {
+        setError("report 0xA0 does not reach the bootloader on the interface "
+                 "egg-fw selected. Nothing further has been written; the mouse "
+                 "is in its bootloader and the vendor's updater can still "
+                 "recover it");
+        return false;
+    }
 
     // Read-only, and the last chance to find out that this transport cannot
     // carry report 0xA0 before Start erases anything. A rehearsal runs exactly
@@ -575,8 +652,21 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
         return true;
     }
 
-    say("erasing and starting");
-    if (!sendStart(chk.blocks)) { setError("start refused: " + error_); return false; }
+    say("erasing and starting — the device holds this reply while it erases");
+    if (!sendStart(chk.blocks)) {
+        char b[420];
+        std::snprintf(b, sizeof b,
+                      "the start command was not acknowledged: %s.\n"
+                      "  Treat the application region as ALREADY ERASED — that "
+                      "is what the device does while holding this reply. The "
+                      "mouse should be in its bootloader as %04X:%04X; check "
+                      "with `egg-fw info` and run this again, which writes from "
+                      "the start. Do not unplug it on the assumption that "
+                      "nothing happened.",
+                      error_.c_str(), kVendorId, opt_.target->bldrPid);
+        setError(b);
+        return false;
+    }
 
     for (size_t i = 0; i < chk.blocks; ++i) {
         if (!sendBlock(i, image.data() + i * kBlockBytes)) {
@@ -633,16 +723,20 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
     if (firmwareOf(opt_.target->appPid, &after)) {
         char b[200];
         if (haveBefore && after == before) {
+            // NOT a failure. There is no version gating in this protocol --
+            // FIRMWARE.md section 4: "no 'already up to date' string in the
+            // binary. Clicking the button always flashes" -- so re-flashing
+            // the version already installed is legitimate, and is the natural
+            // repair action. Reporting it as failure would invite another
+            // erase-and-write cycle.
             std::snprintf(b, sizeof b,
-                          "the mouse came back reporting firmware %x.%02x, the "
-                          "same version it had before. The image may not have "
-                          "been applied — check against the updater's version",
+                          "the mouse reports firmware %x.%02x, the same version "
+                          "as before — expected if you re-flashed the version it "
+                          "already had", after >> 8, after & 0xFF);
+        } else {
+            std::snprintf(b, sizeof b, "the mouse reports firmware %x.%02x",
                           after >> 8, after & 0xFF);
-            setError(b);
-            return false;
         }
-        std::snprintf(b, sizeof b, "the mouse reports firmware %x.%02x",
-                      after >> 8, after & 0xFF);
         say(b);
     }
 

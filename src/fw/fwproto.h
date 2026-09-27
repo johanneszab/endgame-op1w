@@ -24,6 +24,10 @@ inline constexpr uint16_t kVendorId = 0x3367;
 // application device declares them; see Flasher::tryOpen. [HID]
 inline constexpr uint16_t kVendorUsagePage = 0xFF01;
 inline constexpr uint16_t kVendorUsage     = 0x0002;
+// The interface the application carries it on. The BOOTLOADER has a single
+// interface numbered 0 (FIRMWARE.md section 9), so this is a ranking hint
+// only -- never a requirement, or a mouse in DFU becomes unreachable.
+inline constexpr int      kVendorInterface = 1;
 
 // A mouse and the bootloader it reboots into are two different USB devices.
 struct Target {
@@ -79,7 +83,10 @@ enum class Cmd : uint8_t {
     FactoryReset   = 0x13,  // on the 0xA1 report, after re-enumeration
 };
 
-// The magic that makes the running firmware reboot into DFU: payload +0..+3.
+// The magic that makes the running firmware reboot into DFU. It sits at REPORT
+// bytes +4..+7 -- immediately after the sub-command and the two zero bytes --
+// and NOT inside the +16 payload. FIRMWARE.md section 3 step (a), confirmed
+// byte for byte on the wire in section 8: `a0 3a 00 00 00 5a a5 32`.
 inline constexpr uint8_t kEnterMagic[4] = { 0x00, 0x5A, 0xA5, 0x32 };
 
 // ------------------------------------------------------------- responses ---
@@ -127,6 +134,12 @@ inline constexpr uint16_t kFirstBlockIndex = 0x0034;
 inline constexpr size_t   kImageBlocks    = 205;
 inline constexpr uint16_t kLastBlockIndex = 0x0100;
 
+// So the ceiling survives independently of the image-size check: if someone
+// later relaxes the block count for a differently sized firmware, this stops
+// the change from silently taking the 0x0100 limit with it.
+static_assert(kFirstBlockIndex + kImageBlocks - 1 == kLastBlockIndex,
+              "block geometry and the highest observed index disagree");
+
 // Retry rules, from the vendor tool. [BIN]
 inline constexpr int kBlockAttempts    = 5;
 inline constexpr int kBlockRetryMs     = 70;
@@ -135,6 +148,11 @@ inline constexpr int kBusyAttempts     = 8;   // budget of its own; busy is not 
 // The vendor paces blocks 70 ms apart. Our loop had no delay at all, which is
 // the most likely way to provoke the busy path we are least sure about.
 inline constexpr int kBlockPaceMs      = 70;
+// Re-reading a reply that has not arrived yet. The capture shows the device
+// holding the reply to Start for 3.9 s while it erases, and Linux gives a
+// control transfer 5 s, so a slightly slower erase must not read as a refusal.
+inline constexpr int kSlowReplyAttempts = 6;
+inline constexpr int kSlowReplyMs       = 1000;
 // The only end-to-end measurement available shows 19.7 s of guest-observable
 // time between `complete` and the application device reappearing. Some of that
 // is probably VM passthrough rather than the mouse, but FIRMWARE.md section 9
