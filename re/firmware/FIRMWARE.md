@@ -64,6 +64,42 @@ So "take the only FWFILE resource" fails, "take the highest ID" picks the wrong
 one, and "take the largest" ties. **An extractor must recover the ID from the
 code and refuse to run if it cannot pin exactly one.**
 
+#### Confirmed against a second updater, and the trap is worse than it looked
+
+`OP1w4kv2/firmware/Endgame Gear OP1w 4k v2 Firmware Updater v1.07.exe`
+(2,785,280 bytes) carries **five** FWFILE resources, and the one it flashes is
+neither the first nor the last: **[BIN]**
+
+| updater | FWFILE ids present | flashed | code site |
+|---|---|---|---|
+| OP1w 4k v1.10 | 134, 135 | **134** | rva `0x4190`, thunk `0x567298` |
+| OP1w 4k v2 v1.07 | 134, 135, 136, 137, 139 | **136** | rva `0x32B7`, thunk `0x51B230` |
+
+Every naive rule fails on the second sample — lowest picks 134, highest picks
+139, largest ties five ways, and a fixed file offset is meaningless. The code
+site moved between the two binaries, so the instruction-pattern scan is doing
+real work rather than accidentally matching a constant layout.
+
+All seven images across the two updaters are **209,920 bytes and mutually
+distinct** (sha256), so size never discriminates and none is a duplicate. They
+fall into shape classes by record structure, which is a fingerprint of the
+*plaintext* since each image is keyed separately:
+
+```
+135 distinct records, most repeated x71 : v1/134, v1/135, v2/134, v2/135
+138 distinct records, most repeated x68 : v2/136, v2/137
+136 distinct records, most repeated x70 : v2/139
+```
+
+The pairing is suggestive — ids arrive two at a time with matching shape, and
+the flashed one is the lower of its pair — but nothing here establishes what
+the spares are for, and a wrong pick would flash a valid-looking image built
+for something else. **[?]**
+
+This retires the caveat this document previously carried, that cross-version
+stability was unverified with n=1. The *method* now has n=2 and holds. What is
+still n=1 is any claim about a specific id: 134 is not "the firmware id".
+
 `re/tools/extract_fw.py` does exactly that — stdlib-only Python, runs on Linux,
 no hardcoded offsets. It matches the call sequence
 

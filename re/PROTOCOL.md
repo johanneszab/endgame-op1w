@@ -1108,6 +1108,38 @@ model-specific writes until it can.
 > makes `harvestSensor()` do. The stage is changed with the CPI button under
 > the mouse instead; §4's colour table is how the user tells which one is live.
 
+### The vendor's own changelog confirms the list — and reframes it
+
+Shipped beside the v2 firmware updater
+(`OP1w4kv2/firmware/instructions_changelog.txt.txt`), the v2 mouse firmware
+changelog reads, verbatim:
+
+```
+Version 1.02:
+- Added: Force max Sensor fps option
+- Added: Sensor Angle Tuning
+- Added: 1000Hz Power Saving and 125Hz Office Mode to the Polling Rate dropdown
+- Added: CPI switching via software
+```
+
+That is four of this section's differences, independently confirmed from the
+vendor, and it matches `hasForceMaxFps`, `hasAngleTuning`, `hasPowerSavePolling`
+and `hasCpiStageSelect` exactly. Notably it states in the vendor's own words
+that software CPI switching is something the firmware *gained* — corroborating
+the hardware result that a v1 ignores cmd `0x14` `+7`.
+
+> **But they are firmware capabilities, not model capabilities, and `kModels`
+> keys on the PID.** A v2 still running firmware 1.01 would be detected as
+> capable of all four and is not. Nothing in this project has ever seen such a
+> device — both test mice are well past those versions — and cmd `0x0E` does
+> report the firmware version at payload `+6..+7`, so the check is available if
+> it ever matters. Recorded as a known limitation rather than fixed
+> speculatively. **[?]**
+
+The same file's update instructions ("unplug USB-C from the dongle, plug USB-C
+into the mouse") independently confirm the firmware path is **cable-only**,
+which `firmware/FIRMWARE.md` established from the disassembly. **[UI]**
+
 The v1 tool's LOD combo is populated from a `DLGINIT` resource holding exactly
 `"1mm"` and `"2mm"`, and the only instructions writing that settings byte
 produce `0x01` or `0x02`; anything unexpected on read displays as `1mm`. The v2
