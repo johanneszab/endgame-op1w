@@ -374,6 +374,12 @@ identities, or better, forward the physical port rather than a VID/PID pair.
 Otherwise every attempt will fail at the same place, and it will look like the
 device is refusing the command when in fact it obeyed it.
 
+**The bootloader identifies itself by name.** On the host it enumerates as
+`EGG Bootloader [3367:1971]`, so the iProduct string is a second, independent
+way to recognise it — useful for a Linux flasher, which should gate on VID/PID
+anyway but can sanity-check the string. This is also direct confirmation of the
+PID that §4 derived from the nine `MOV EDX,imm32` call sites. **[DEV]**
+
 The upside is that the state this leaves behind is the one §4 calls recoverable:
 the mouse should be sitting in DFU mode as `3367:1971`, which the updater
 explicitly probes for and handles by flashing directly, skipping the
