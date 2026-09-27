@@ -486,6 +486,17 @@ ENDPOINT 0x81  interrupt IN  64 bytes  1 ms
 collections and the dongle four, so node selection is fiddly there; on the
 bootloader it is unambiguous — there is exactly one hidraw node. **[CAP]**
 
+**The bootloader exposes the vendor collection — deduced, not guessed.** The
+updater's single device-open helper `FUN_00401C00` requires
+`UsagePage == 0xFF01` and `Usage == 0x02` before returning success, and all nine
+call sites go through it, including the four that open `0x1971` (§4). This
+update ran through the recovery branch, which opens the bootloader with that
+helper and then flashes. It flashed. So the bootloader satisfies the usage
+check, and §5's premise holds for it. **[BIN]** + **[CAP]**
+
+That is most of what the report descriptor would have told us, without needing
+it.
+
 The report descriptor's *content* is still missing: the bootloader was already
 enumerated when recording started, so only its length (68 bytes) was injected.
 It is cheap to get and needs no capture — put the mouse in the bootloader on
