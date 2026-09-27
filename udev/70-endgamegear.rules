@@ -28,5 +28,5 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1982", TAG+="uacc
 # See re/firmware/FIRMWARE.md section 4.
 # OP1w 4k        — confirmed on hardware
 KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1971", TAG+="uaccess"
-# OP1w 4k v2     — PID from cmd 0x0E, flashing untested
+# OP1w 4k v2     — confirmed on hardware
 KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1983", TAG+="uaccess"

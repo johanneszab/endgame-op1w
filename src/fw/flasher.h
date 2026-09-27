@@ -98,11 +98,18 @@ private:
 
     void setError(const std::string& s);
     void setErrorHid(const std::string& s);
+    // Appends the DFU recovery paragraph when this run is what put the mouse
+    // into the bootloader. Without it, a failure between the reboot and the
+    // first block reports an error that never mentions the device is no longer
+    // a mouse -- and echoTest's said "nothing has been written", which was
+    // true of the flash and false of the device.
+    bool failed(const std::string& s);
     void say(const std::string& s) const { if (log) log(s); }
 
     Options     opt_;
     hid_device* dev_ = nullptr;
     std::string error_;
+    bool        dfuEnteredHere_ = false;
 };
 
 }  // namespace fw

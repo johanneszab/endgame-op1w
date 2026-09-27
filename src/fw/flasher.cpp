@@ -282,7 +282,11 @@ void Flasher::tryOpen(uint16_t pid)
             if (!fallbackPath) fallbackPath = it->path;
             dev_ = d;
             // The acceptance test is functional: can this node actually carry
-            // report 0xA0? That settles it without trusting a descriptor.
+            // report 0xA0? That settles it without trusting a descriptor --
+            // but ONLY in application mode. The bootloader refuses an
+            // unsolicited GET (FIRMWARE.md section 10), so in DFU this probe
+            // always fails and the choice falls to the rank order plus
+            // fallbackPath below, which is therefore load-bearing there.
             if (reportRoutable()) {
                 if (list) hid_free_enumeration(list);
                 return;
@@ -465,8 +469,8 @@ bool Flasher::echoTest(const uint8_t* firstBlock)
     }
     if (std::memcmp(reply + kPayload, firstBlock, kBlockBytes) != 0) {
         setError("the echo test came back altered — the transport to this "
-                 "device is not carrying 1024-byte payloads intact, and "
-                 "nothing has been written");
+                 "device is not carrying 1024-byte payloads intact. No "
+                 "firmware bytes have been written");
         return false;
     }
     return true;
@@ -656,7 +660,11 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
             return true;
         }
         if (!enterBootloader()) return false;
-        say("waiting for the bootloader to appear");
+        // From here on the mouse is no longer a mouse, and every failure has to
+        // say so. See failed().
+        dfuEnteredHere_ = true;
+        say("waiting for the bootloader to appear — if this machine is a VM, the "
+            "bootloader is a different USB device and has to be forwarded too");
         if (!opt_.dryRun && !waitFor(opt_.target->bldrPid, kBootloaderWaitMs)) {
             setError("the mouse accepted the reboot command but did not come "
                      "back as its bootloader. In a virtual machine that is "
@@ -668,7 +676,7 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
         say("mouse is already in its bootloader; flashing directly");
     }
 
-    if (!openPid(opt_.target->bldrPid, kBootloaderWaitMs)) return false;
+    if (!openPid(opt_.target->bldrPid, kBootloaderWaitMs)) return failed(error_);
 
     // Deliberately NOT reportRoutable() here. That issues a GET_REPORT with no
     // preceding SET, and the bootloader refuses it — every GET in the capture
@@ -683,7 +691,7 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
     // this far and no further, so it proves something instead of proving that
     // a loop counts to 205.
     say("checking the transport with the vendor's echo test (writes nothing)");
-    if (!echoTest(image.data())) return false;
+    if (!echoTest(image.data())) return failed(error_);
 
     if (opt_.dryRun) {
         say("rehearsal stops here: everything past this point erases or writes");
@@ -796,6 +804,25 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
 }
 
 void Flasher::setError(const std::string& s) { error_ = s; }
+
+bool Flasher::failed(const std::string& s)
+{
+    error_ = s;
+    if (dfuEnteredHere_ && opt_.target) {
+        char b[420];
+        std::snprintf(b, sizeof b,
+                      "\n  Note: this run rebooted the mouse into its "
+                      "bootloader, so it is now %04X:%04X and is not acting as "
+                      "a mouse. No firmware bytes were written. Confirm with "
+                      "`egg-fw info` and run this again — that writes from the "
+                      "start and is the vendor updater's own recovery path. "
+                      "Whether the bootloader always survives is not proven "
+                      "(FIRMWARE.md section 4), so check rather than assume.",
+                      kVendorId, opt_.target->bldrPid);
+        error_ += b;
+    }
+    return false;
+}
 
 // Every I/O failure used to collapse to "write failed" or "no reply", which
 // cannot distinguish a yanked cable from a device refusing the data -- the

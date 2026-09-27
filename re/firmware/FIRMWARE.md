@@ -591,6 +591,14 @@ An OP1w 4k v2 was then flashed by the same code, 1.07 over 1.07 — legitimate,
 since there is no version gating (§4) — and came back on 1.07 in application
 mode. So the sequence is not v1-specific.
 
+> **Both flashes entered through the recovery path**, with the mouse already in
+> DFU, because the hypervisor drops the device the moment it changes identity.
+> `flash()`'s application-mode branch — reboot and flash in one invocation —
+> has still never run. And because run 2 was a same-version reflash *without* a
+> before-value to compare against, its "reports firmware 1.07" is, on its own,
+> the same output an entirely failed write would have produced. What makes it
+> evidence is the v1 run, where the version demonstrably changed.
+
 Two things it settled:
 
 - **`3367:1983` really is the v2's bootloader.** It was previously read out of
@@ -602,10 +610,24 @@ Two things it settled:
   from the v1 disassembly. Worth checking before flashing an unproven model,
   and it is a two-second scan.
 
-> **3 s is not long enough to wait for the bootloader.** The vendor waits that,
-> and the v2 took longer, so `egg-fw` declared failure on a mouse that had
-> rebooted correctly. Same lesson as the re-enumeration budget: the vendor's
-> coded sleeps are not minimums. Now 30 s.
+> **A correction, because this document's value is its tagging discipline.**
+> An earlier version of this section said "3 s is not long enough — the v2 took
+> longer to re-enumerate", tagged **[DEV]**. That is not what was measured.
+> `egg-fw` did time out at 3 s on a v2 that had rebooted correctly — but the
+> run was inside a VM, and §8 already records that the hypervisor stops
+> forwarding the bootloader at exactly that moment. **The guest never saw the
+> device, so no re-enumeration time was measured at all.** The number described
+> passthrough, not the mouse.
+>
+> This is the third time in this project that a hardware observation turned out
+> to be an artefact for want of a control, which is the whole reason the rule
+> about positive controls exists. `egg-fw` still waits 30 s, but on an honest
+> argument: the vendor's 3 s is an open-retry budget (§3 step b), not a device
+> specification, and waiting longer costs nothing when the alternative is
+> telling a user their successful reboot failed. **[?]**
+>
+> Measuring how long DFU actually takes to appear needs bare metal, or a
+> hypervisor forwarding the physical port rather than a VID/PID pair.
 
 ### An unsolicited `GET_REPORT` fails on the bootloader **[DEV]**
 

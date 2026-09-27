@@ -143,13 +143,17 @@ flash again — it writes from the start, which is the vendor tool's own recover
 path. Note that `70-endgamegear.rules` must be installed for this to work: the
 bootloader is a different product ID and needs its own rule.
 
-> Both the OP1w 4k (v1) and the OP1w 4k v2 have been flashed end to end **by
-> this tool**, on real hardware, each reporting its version back afterwards.
+> **What has actually been tested.** Both the OP1w 4k (v1) and the OP1w 4k v2
+> have been flashed end to end by this tool, on real hardware, each reporting
+> its version back afterwards. In both cases the mouse was **already in its
+> bootloader** — the combined path above, where one command reboots the mouse
+> and then flashes it, has not yet been exercised. It is the same protocol
+> either way, and the reboot step has been run on its own, but you would be
+> the first to run them in sequence.
+>
 > Neither XM2w model is supported: nothing establishes their bootloader
 > identities, and `egg-fw` refuses rather than guessing at a device that is
-> about to be overwritten. Neither XM2w model is supported at all, because
-> nothing establishes their bootloader identities and guessing at a device
-> about to be overwritten is not worth it.
+> about to be overwritten.
 
 ## Design notes
 
@@ -206,6 +210,6 @@ enumerates as `3367:1970`. While the mouse is asleep that query fails, and the
 device layer then refuses any write whose encoding depends on the model, rather
 than guessing. See [`re/PROTOCOL.md`](re/PROTOCOL.md) §12.
 
-Not implemented: firmware update (commands not investigated), and the
-`0x71`/`0x72` pairing commands, which exist in the vendor binary but are
-unreachable from its UI.
+Not implemented: the `0x71`/`0x72` pairing commands, which exist in the vendor
+binary but are unreachable from its UI. Firmware update is implemented — see
+`egg-fw` above and [`re/firmware/FIRMWARE.md`](re/firmware/FIRMWARE.md).

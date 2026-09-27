@@ -41,8 +41,11 @@ void usage()
         "  egg-fw flash   <updater.exe>      write it  (add --yes to do it for real)\n"
         "  egg-fw extract <updater.exe> -o <file.bin>\n"
         "                                    save the firmware image by itself\n"
-        "  egg-fw bootloader --yes           reboot the mouse into its bootloader\n"
-        "                                    and stop there, for inspection\n"
+        "  egg-fw bootloader                 DEVELOPER ONLY, and one-way: reboots\n"
+        "                                    the mouse into its bootloader and\n"
+        "                                    leaves it there. The only known way\n"
+        "                                    back is to flash it, so have the\n"
+        "                                    updater .exe to hand first\n"
         "\n"
         "what to do:\n"
         "  1. Download the firmware updater for your mouse from endgamegear.com.\n"
@@ -251,14 +254,21 @@ int cmdBootloader(const std::vector<std::string>& args)
     if (!f.enterDfu()) return die(f.lastError());
 
     if (!opt.dryRun) {
-        std::cout <<
+        // The product ID has to come from the detected model: hardcoding the
+        // v1's 1971 printed a snippet that silently matched nothing on a v2,
+        // leaving the user to conclude the mouse was dead.
+        bool inBootloader = false;
+        const Target* t = Flasher::detect(&inBootloader);
+        std::printf(
             "\nThe mouse is now its bootloader — a separate USB device. On Linux\n"
             "its report descriptor can be read without flashing anything:\n"
             "\n"
             "  for h in /sys/class/hidraw/hidraw*; do\n"
             "    p=$(cat $h/device/../../idProduct 2>/dev/null)\n"
-            "    [ \"$p\" = \"1971\" ] && echo $h && xxd $h/device/report_descriptor\n"
-            "  done\n";
+            "    [ \"$p\" = \"%04x\" ] && echo $h && xxd $h/device/report_descriptor\n"
+            "  done\n"
+            "\nTo get it back, flash it: egg-fw flash <updater.exe> --yes\n",
+            t ? t->bldrPid : 0x1971);
     }
     return 0;
 }

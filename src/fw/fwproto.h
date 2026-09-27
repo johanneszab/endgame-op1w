@@ -52,6 +52,11 @@ inline constexpr Target kTargets[] = {
       "ad612be22f77907162429e1053a6fad53c91bd59a7f0916c9715970e56aa2b27" },
     // OP1w 4k v2. Flashed end to end on hardware, and 0x1983 confirmed by
     // watching it enumerate rather than only by reading cmd 0x0E. [DEV]
+    //
+    // Both models' flashes entered through the RECOVERY path, with the mouse
+    // already in DFU. flash()'s application-mode branch -- reboot and flash in
+    // one invocation -- has still never run, so `verified` means "the block
+    // protocol works on this model", not "every path has been exercised".
     { 0x1984, 0x1983, "OP1w 4k v2", "op1w4kv2", true,
       "92605563e19b2f933951d3766835bbc99fd0a16d6452c2abbab7632f3393ab85" },
 };
