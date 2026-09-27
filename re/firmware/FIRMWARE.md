@@ -585,6 +585,28 @@ skips it. Its framing was built from the disassembly alone and worked
 unmodified — and being read-only, it is the right thing to run before Start
 erases anything.
 
+### The v2 as well, and its bootloader identity confirmed **[DEV]**
+
+An OP1w 4k v2 was then flashed by the same code, 1.07 over 1.07 — legitimate,
+since there is no version gating (§4) — and came back on 1.07 in application
+mode. So the sequence is not v1-specific.
+
+Two things it settled:
+
+- **`3367:1983` really is the v2's bootloader.** It was previously read out of
+  cmd `0x0E` payload `+4..+5` and never seen enumerate; it now has, exposing
+  two HID collections like the v1's.
+- **The v2 updater uses the identical bootloader protocol.** Its binary carries
+  the same `00 5A A5 32` magic, the same `A0 3A`/`03`/`06`/`09` and `A1 13`,
+  and the same dword immediates `0x32A55A00` and `0x00003AA0` that §3 cites
+  from the v1 disassembly. Worth checking before flashing an unproven model,
+  and it is a two-second scan.
+
+> **3 s is not long enough to wait for the bootloader.** The vendor waits that,
+> and the v2 took longer, so `egg-fw` declared failure on a mouse that had
+> rebooted correctly. Same lesson as the re-enumeration budget: the vendor's
+> coded sleeps are not minimums. Now 30 s.
+
 ### An unsolicited `GET_REPORT` fails on the bootloader **[DEV]**
 
 `egg-fw` briefly used a bare `GET_REPORT` of report `0xA0` as a cheap

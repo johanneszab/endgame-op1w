@@ -50,10 +50,9 @@ inline constexpr Target kTargets[] = {
     // OP1w 4k v1. Flashed end to end on hardware. [CAP]
     { 0x1972, 0x1971, "OP1w 4k",    "op1w4k",   true,
       "ad612be22f77907162429e1053a6fad53c91bd59a7f0916c9715970e56aa2b27" },
-    // OP1w 4k v2. The bootloader PID is read from cmd 0x0E payload +4..+5 on a
-    // real v2 [DEV], but no update has been captured, so the sequence below is
-    // assumed rather than observed for this model.
-    { 0x1984, 0x1983, "OP1w 4k v2", "op1w4kv2", false,
+    // OP1w 4k v2. Flashed end to end on hardware, and 0x1983 confirmed by
+    // watching it enumerate rather than only by reading cmd 0x0E. [DEV]
+    { 0x1984, 0x1983, "OP1w 4k v2", "op1w4kv2", true,
       "92605563e19b2f933951d3766835bbc99fd0a16d6452c2abbab7632f3393ab85" },
 };
 
@@ -161,7 +160,13 @@ inline constexpr int kSlowReplyMs       = 1000;
 // which invites the user to run the whole erase-and-write cycle again. Waiting
 // longer costs nothing here. [CAP]
 inline constexpr int kReenumerateMs    = 45000;
-inline constexpr int kBootloaderWaitMs = 3000;  // wait for DFU to appear
+// The vendor waits 3 s for DFU to appear. That is not enough in practice: an
+// OP1w 4k v2 took longer than 3 s to re-enumerate as its bootloader and egg-fw
+// declared failure on a mouse that had in fact rebooted correctly. Same lesson
+// as kReenumerateMs -- the vendor's coded sleeps are not minimums, and waiting
+// longer costs nothing when the alternative is telling the user a successful
+// reboot failed. [DEV]
+inline constexpr int kBootloaderWaitMs = 30000;
 
 // 16-bit wrapping additive sum, the only integrity check in the protocol.
 inline uint16_t checksum(const uint8_t* p, size_t n)
