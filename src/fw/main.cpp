@@ -41,6 +41,8 @@ void usage()
         "  egg-fw flash   <updater.exe>      write it  (add --yes to do it for real)\n"
         "  egg-fw extract <updater.exe> -o <file.bin>\n"
         "                                    save the firmware image by itself\n"
+        "  egg-fw bootloader --yes           reboot the mouse into its bootloader\n"
+        "                                    and stop there, for inspection\n"
         "\n"
         "what to do:\n"
         "  1. Download the firmware updater for your mouse from endgamegear.com.\n"
@@ -218,6 +220,46 @@ int cmdExtract(const std::vector<std::string>& args)
     return 0;
 }
 
+// Reboot into the bootloader and stop. Exists so the bootloader can be
+// inspected without flashing — its HID report descriptor is in no capture, and
+// tryOpen() currently has to work around not knowing what it declares.
+int cmdBootloader(const std::vector<std::string>& args)
+{
+    Options opt;
+    opt.dryRun = true;
+    for (const std::string& a : args) {
+        if (a == "--yes") opt.dryRun = false;
+        else return die("unknown option " + a);
+    }
+
+    if (opt.dryRun) {
+        std::cout << "REHEARSAL — add --yes to actually reboot the mouse.\n\n";
+    } else {
+        std::cout <<
+            "This reboots the mouse into its bootloader and leaves it there.\n"
+            "The only established way back out is to flash it — with egg-fw, or\n"
+            "with the vendor's updater, which has a recovery branch for exactly\n"
+            "this state. Whether a power cycle leaves the bootloader has never\n"
+            "been tested.\n\n";
+    }
+
+    Flasher f(opt);
+    f.log = [](const std::string& s) { std::cout << "  " << s << "\n"; };
+    if (!f.enterDfu()) return die(f.lastError());
+
+    if (!opt.dryRun) {
+        std::cout <<
+            "\nThe mouse is now its bootloader — a separate USB device. On Linux\n"
+            "its report descriptor can be read without flashing anything:\n"
+            "\n"
+            "  for h in /sys/class/hidraw/hidraw*; do\n"
+            "    p=$(cat $h/device/../../idProduct 2>/dev/null)\n"
+            "    [ \"$p\" = \"1971\" ] && echo $h && xxd $h/device/report_descriptor\n"
+            "  done\n";
+    }
+    return 0;
+}
+
 int cmdFlash(std::vector<std::string> args)
 {
     Options opt;
@@ -345,6 +387,7 @@ int main(int argc, char** argv)
     const std::string cmd = args[0];
     args.erase(args.begin());
 
+    if (cmd == "bootloader") return cmdBootloader(args);
     if (cmd == "info")    return cmdInfo();
     if (cmd == "verify")  { if (args.empty()) return die("verify needs a file"); return cmdVerify(args[0]); }
     if (cmd == "extract") return cmdExtract(args);

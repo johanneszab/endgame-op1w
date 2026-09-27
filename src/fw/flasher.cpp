@@ -577,6 +577,43 @@ bool Flasher::sendFactoryReset()
 
 // ----------------------------------------------------------------- drive ---
 
+bool Flasher::enterDfu()
+{
+    bool inBootloader = false;
+    const Target* found = detect(&inBootloader);
+    if (!found) { setError("no supported mouse found"); return false; }
+    if (inBootloader) { say("the mouse is already in its bootloader"); return true; }
+    opt_.target = found;
+
+    if (!openPid(found->appPid)) return false;
+    if (!reportRoutable()) {
+        setError("report 0xA0 does not reach the mouse on the interface egg-fw "
+                 "selected, so the reboot command would go nowhere. Nothing has "
+                 "been written");
+        return false;
+    }
+    if (opt_.dryRun) {
+        say("rehearsal: report 0xA0 reaches the mouse. Add --yes to reboot it "
+            "into the bootloader.");
+        return true;
+    }
+    if (!enterBootloader()) return false;
+
+    say("waiting for the bootloader to appear");
+    if (!waitFor(found->bldrPid, kBootloaderWaitMs)) {
+        char b[320];
+        std::snprintf(b, sizeof b,
+                      "the mouse accepted the reboot command but has not "
+                      "re-appeared as %04X:%04X here. It is a different USB "
+                      "device, so a virtual machine will stop forwarding it at "
+                      "exactly this point — look for it on the host",
+                      kVendorId, found->bldrPid);
+        setError(b);
+        return false;
+    }
+    return true;
+}
+
 bool Flasher::flash(const std::vector<uint8_t>& image)
 {
     const ImageCheck chk = inspectImage(image);

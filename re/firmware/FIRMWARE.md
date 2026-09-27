@@ -497,8 +497,56 @@ check, and §5's premise holds for it. **[BIN]** + **[CAP]**
 That is most of what the report descriptor would have told us, without needing
 it.
 
-The report descriptor's *content* is still missing: the bootloader was already
-enumerated when recording started, so only its length (68 bytes) was injected.
+### The bootloader's report descriptor **[DEV]**
+
+Read from a v1 in DFU via `/sys/class/hidraw/hidraw13/device/report_descriptor`,
+68 bytes, matching the `wDescriptorLength` in the config descriptor. It has
+**two** top-level collections:
+
+```
+05 01  09 02  a1 01        Generic Desktop / Mouse, Application
+  85 01                      report ID 1
+  09 01  a1 00              Pointer, Physical
+    05 09 19 01 29 08          buttons 1..8
+    15 00 25 01 95 08 75 01 81 02
+    05 01 09 30 09 31          X, Y
+    15 80 25 7f 75 08 95 02 81 06
+  c0  c0
+06 01 ff  09 02  a1 01     VENDOR 0xFF01 / usage 0x02, Application
+  85 a0                      report ID 0xA0
+  75 80  95 41               size 128 bits x count 65 = 1040 bytes
+  15 00 25 01 09 22 b1 03    FEATURE
+c0
+```
+
+Three things follow.
+
+**The deduction in the previous paragraph is confirmed directly.** The
+bootloader really does declare `0xFF01`/`0x02`, which is why the vendor's
+device-open helper can find it.
+
+**The 1041-byte report is confirmed from the bootloader's own descriptor** —
+65 × 16 bytes plus the ID — not merely from the application's.
+
+**There is no report `0xA1` here.** The bootloader carries `0xA0` only, so the
+closing factory reset cannot be sent to it. That matches the vendor sequence,
+which sends `A1 13` only after the device has re-enumerated as the
+application.
+
+> **The vendor collection is the SECOND top-level collection, and that is a
+> trap for node selection.** hidapi reports a single `usage_page`/`usage` pair
+> per hidraw node, and which one depends on the version — commonly the *first*
+> top-level collection, here Generic Desktop / Mouse (`0x0001`/`0x0002`). So a
+> client that selects the bootloader by testing `usage_page == 0xFF01` may well
+> not match, and the bootloader's one interface is numbered **0**, so an
+> "interface 1" fallback cannot match either.
+>
+> This is exactly the failure an adversarial review predicted for `egg-fw`
+> before this descriptor was read, and the descriptor confirms it would have
+> fired on the first real Linux run: the tool would have put a mouse into DFU
+> and then been unable to reopen it. The fix is to treat descriptor fields as a
+> *ranking hint* only and to accept a node on a functional test — can it carry
+> report `0xA0`? — with a catch-all rank so no node is ever excluded outright.
 It is cheap to get and needs no capture — put the mouse in the bootloader on
 Linux and read
 `/sys/class/hidraw/hidrawN/device/report_descriptor`. Note the interface

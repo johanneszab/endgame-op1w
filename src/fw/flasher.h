@@ -62,6 +62,15 @@ public:
     // never ran. Do not let this comment become a guarantee.
     bool flash(const std::vector<uint8_t>& image);
 
+    // Put the mouse into its bootloader and stop there. Exists so the
+    // bootloader can be inspected without flashing anything -- notably to read
+    // its HID report descriptor, which no capture contains and which the node
+    // selection in tryOpen() currently has to work around.
+    //
+    // Getting BACK out is not free: the only established route is to flash.
+    // Whether a power cycle leaves DFU has never been tested.
+    bool enterDfu();
+
 private:
     bool openPid(uint16_t pid, int timeoutMs = 0);
     void tryOpen(uint16_t pid);
