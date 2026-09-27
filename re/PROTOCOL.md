@@ -1255,8 +1255,24 @@ every firmware seen until now — 1.01, 1.07, 1.08 — has a minor digit of 9 or
 less, where the two readings agree. Updating a mouse to 1.10 is what exposed
 it. **[DEV]**
 
-### Still untested
+### Writing is confirmed too
 
-Writing over a cable. Reads are confirmed; the three write blocks are not, and
-nothing in the protocol suggests they would differ, which is exactly the kind
-of assumption this document exists to avoid recording as fact.
+All three write blocks were exercised on a cabled OP1w 4k v1 and read back at
+the byte level, then restored to a blob byte-identical to the one they started
+from: **[DEV]**
+
+| block | blob byte | change | meaning |
+|---|---|---|---|
+| cmd `0x14` | `0x24` | `90 01` → `f4 01` | CPI stage 1, 400 → 500 |
+| cmd `0x15` | `0x06` | `11` → `10` | slamclick cleared; bit 4 untouched |
+| cmd `0x16` | `0x54` | `10` → `08` | forward button, Forward → Back |
+
+Two things worth drawing out. The `0x15` write moved **only** the bit asked
+for, leaving the v1-only motion-jitter bit 4 alone — the whole-block read-
+modify-write discipline behaving as intended on a live device. And all three
+commands carry `Target::Mouse` (`0x0F`), the *wireless* selector, unchanged
+from the dongle path: they work anyway, which confirms from the write side
+that a cabled mouse ignores the target byte rather than wanting a different
+one.
+
+So cabled support needs nothing beyond the probe fallback described above.
