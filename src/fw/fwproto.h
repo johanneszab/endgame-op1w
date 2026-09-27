@@ -157,21 +157,24 @@ inline constexpr int kBlockPaceMs      = 70;
 // control transfer 5 s, so a slightly slower erase must not read as a refusal.
 inline constexpr int kSlowReplyAttempts = 6;
 inline constexpr int kSlowReplyMs       = 1000;
-// The only end-to-end measurement available shows 19.7 s of guest-observable
-// time between `complete` and the application device reappearing. Some of that
-// is probably VM passthrough rather than the mouse, but FIRMWARE.md §3
-// warns explicitly that the vendor's coded sleeps are not minimums, and a
-// budget with no margin turns a SUCCESSFUL flash into a reported failure --
-// which invites the user to run the whole erase-and-write cycle again. Waiting
-// longer costs nothing here. [CAP]
+// Bare metal does this in 1.17 s to a usable hidraw node, twice, so the
+// vendor's own 5 s budget for it is adequate and this is wildly generous.
+// Deliberately so: the failure mode of being too tight here is telling a user
+// that a flash which actually COMPLETED has failed, which invites them to run
+// another erase-and-write cycle. Nothing is gained by trimming it.
+//
+// The VM capture's 19.7 s for the same interval was ~94% passthrough.
+// FIRMWARE.md §3. [DEV]
 inline constexpr int kReenumerateMs    = 45000;
 // The vendor waits 3 s for DFU to appear, which is an open-retry budget and not
 // a device specification -- so waiting longer costs nothing, and the
 // alternative is telling a user their successful reboot failed.
 //
-// Measured on bare metal (v1, xhci, from dmesg): 5.19 s from the mouse
-// disconnecting to the bootloader enumerating, 5.63 s to a usable hidraw node.
-// So the vendor's 3 s genuinely cannot make it. FIRMWARE.md §3. [DEV]
+// Measured on bare metal (v1, xhci, from dmesg), twice: 5.01-5.19 s from the
+// mouse disconnecting to the bootloader enumerating, 5.45-5.63 s to a usable
+// hidraw node. So the vendor's 3 s genuinely cannot make it -- and note this
+// is ~7x longer than the same device takes to boot its application (0.71 s),
+// so it is not a figure to infer from the return trip. FIRMWARE.md §3. [DEV]
 //
 // That figure is new. This comment previously cited an OP1w 4k v2 that "took
 // longer than 3 s" -- which was a VM artefact, since the hypervisor stops

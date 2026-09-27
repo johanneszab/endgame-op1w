@@ -145,11 +145,15 @@ bootloader is a different product ID and needs its own rule.
 
 > **What has actually been tested.** Both the OP1w 4k (v1) and the OP1w 4k v2
 > have been flashed end to end by this tool, on real hardware, each reporting
-> its version back afterwards. In both cases the mouse was **already in its
-> bootloader** — the combined path above, where one command reboots the mouse
-> and then flashes it, has not yet been exercised. It is the same protocol
-> either way, and the reboot step has been run on its own, but you would be
-> the first to run them in sequence.
+> its version back afterwards. The v1 has also done the whole sequence in a
+> single command — reboot into the bootloader, flash, come back — which is the
+> path described above, so nothing in this section is untried.
+>
+> What has *not* happened is a flash that went wrong: no block has ever needed
+> resending, and no image has been interrupted part-way. So the retry and
+> recovery paths are written from the vendor's own behaviour and the protocol,
+> not from experience. If a flash does fail, re-running it is the documented
+> repair, but read the error — it will tell you what state the mouse is in.
 >
 > Neither XM2w model is supported: nothing establishes their bootloader
 > identities, and `egg-fw` refuses rather than guessing at a device that is

@@ -282,26 +282,50 @@ erase-and-write cycle. `egg-fw` therefore waits far longer than the vendor at
 every step — 30 s for DFU to appear, 45 s for re-enumeration — because waiting
 costs nothing and a false failure does not.
 
-**How long the bootloader takes to appear, measured on bare metal** (Fedora,
-`xhci_hcd`, OP1w 4k v1, from `dmesg`): **[DEV]**
+### The two re-enumerations, measured on bare metal
+
+Both identity changes timed from `dmesg` on Fedora / `xhci_hcd` with an
+OP1w 4k v1, over two runs. These are the intervals a host tool has to wait out,
+and the only ones the vendor puts a budget on: **[DEV]**
+
+| transition | run 1 | run 2 | vendor's budget |
+|---|---|---|---|
+| **(a)** mouse disconnects → bootloader enumerating | 5.19 s | 5.01 s | 3000 ms — **cannot make it** |
+| → its hidraw node usable | 5.63 s | 5.45 s | |
+| **(g)** bootloader disconnects → application enumerating | 0.71 s | 0.71 s | 5000 ms — adequate |
+| → its hidraw node usable | 1.17 s | 1.17 s | |
 
 ```
-18707.337  usb 1-3: USB disconnect              <- the mouse obeys step (a)
-18712.528  usb 1-3: new full-speed USB device   <- +5.19 s
-18712.853  idProduct=1971  Product: Bootloader  <- +5.52 s
-18712.968  hid-generic ... hidraw0              <- +5.63 s, usable
+19987.522  usb 1-3: USB disconnect                 <- the mouse obeys step (a)
+19992.535  usb 1-3: new full-speed USB device      <- +5.01 s
+19992.857  idProduct=1971  Product: Bootloader     <- +5.33 s
+19992.972  hid-generic ... hidraw0                 <- +5.45 s, usable
+20022.275  usb 1-3: USB disconnect                 <- step (f) completed
+20022.989  usb 1-3: new full-speed USB device      <- +0.71 s
+20023.312  idProduct=1972  bcdDevice= 1.10         <- +1.04 s
+20023.445  hid-generic ... hidraw0                 <- +1.17 s, usable
 ```
 
-So a host tool needs **~5.6 s** from losing the mouse to having a node it can
-open — and **the vendor's 3 s budget cannot make it**, since that budget starts
-at the send, which is at or before the disconnect. This does not separate the
-device's boot time from the kernel's enumeration, and it does not need to: the
-figure a reimplementation must cover is the whole interval.
+Three things worth taking from this.
 
-This is the first *controlled* measurement of that interval. An earlier claim of
-the same shape was withdrawn as a VM artefact (§7), and the 30 s `egg-fw` waits
-was justified on the open-retry argument above rather than on any number. The
-number now agrees with it.
+**The vendor's 3 s budget for DFU genuinely cannot work**, since it starts at the
+send, which is at or before the disconnect. Its 5 s for the return trip is fine.
+
+**Entering DFU takes ~7× longer than booting the application** — ~5.1 s against
+~0.71 s. The kernel's share is constant at ~0.45 s from "new device" to a hidraw
+node in all four observations, and the run-to-run spread carries through every
+line unchanged, so the difference is the device, not the host.
+
+**The VM capture's 19.7 s for step (g) was ~94% passthrough.** Bare metal does it
+in 1.17 s. The `[CAP]` number was never wrong about what it measured; it was
+just never about the mouse. `kReenumerateMs` stays generous anyway — the cost of
+being wrong in the other direction is telling a user a completed flash failed.
+
+Total time in the bootloader, echo through `complete`, was 29.3 s for 205 blocks.
+
+An earlier claim that the vendor's 3 s was too short had to be withdrawn as a VM
+artefact (§7), and the 30 s `egg-fw` waits was justified on the open-retry
+argument above rather than on any number. The numbers now agree with it.
 
 ## 4. The three USB identities
 
@@ -517,13 +541,18 @@ been executed by that code, including `A0 01`, which no capture contains.
 Two caveats on that, kept because they are the difference between evidence and a
 green tick:
 
-- **Both of those runs entered through the recovery branch**, with the mouse
-  already in DFU. `flash()`'s application-mode branch — reboot and flash in one
-  invocation — has since been run on bare metal, and **it did not complete**: the
-  mouse rebooted correctly, but `egg-fw` misread the reboot request's own result
-  as a refusal and gave up (§3). Flashing it a second time succeeded. The
-  misreading is fixed; one invocation carrying the whole sequence has still not
-  been observed to finish.
+- The first two runs entered through the **recovery** branch, with the mouse
+  already in DFU. The **application-mode branch** — reboot and flash in one
+  invocation — has since completed on bare metal too, on a v1: reboot, DFU,
+  echo, erase, 205/205, re-enumeration, factory reset, and `egg-cli info`
+  reporting 1.10 from the re-attached mouse. **[DEV]**
+
+  Its first attempt failed, and instructively: the mouse rebooted correctly and
+  `egg-fw` misread the reboot request's own result as a refusal (§3). That is
+  fixed, and the successful run is with the fix.
+- That run reflashed 1.10 over 1.10, so it does not by itself prove new bytes
+  landed — only that the *sequence* runs unaided. The byte-level proof is the
+  205/205 capture comparison above and the earlier 1.08 → 1.10 change.
 - The v2 run was a same-version reflash *without* a before-value, so "reports
   firmware 1.07" is, on its own, the same output a wholly failed write would
   give. What makes it evidence is the v1 run, where the version demonstrably
