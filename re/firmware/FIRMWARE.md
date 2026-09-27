@@ -321,3 +321,61 @@ device, because the bootloader appears as a new one mid-session.
 **Do not deliberately interrupt a flash to test recoverability** until a clean
 end-to-end trace exists. And note what the capture will *not* tell you: whether
 the device would refuse a corrupt image. Only sending one answers that.
+
+---
+
+## 8. First wire evidence — a failed run, 2026-09-27
+
+An attempt on the cabled v1 (firmware 1.08) stopped at the first step with the
+updater reporting `send bldr request failed`. Nothing was written to flash, and
+the capture is only 30 packets, but it confirms several predictions that until
+now rested entirely on the disassembly. Parse it with
+`re/tools/parse_fwcap.py`; capture at
+`re/captures/firmware/fw_op1w4k_v108_to_v110.pcap`.
+
+**The enter-bootloader command is exactly as predicted.** **[CAP]**
+
+```
+setup    21 09 a0 03 01 00 11 04
+         │  │  │     │     └──── wLength 1041
+         │  │  │     └────────── wIndex 1 (interface)
+         │  │  └──────────────── wValue 0x03A0 = Feature report, id 0xA0
+         │  └─────────────────── bRequest 0x09 SET_REPORT
+         └────────────────────── bmRequestType 0x21 host->device, class, interface
+payload  a0 3a 00 00 00 5a a5 32 00 00 00 ... (zeros to 1041)
+```
+
+Byte for byte what §3 derived from `FUN_004044B0`, including the `00 5A A5 32`
+magic. The 1041-byte report size and the `0xA1`/`0x09` request pair are
+confirmed too.
+
+**The version mechanism is confirmed.** The device descriptor carries
+`bcdDevice = 0x0108`, and the updater displays "1.08" — so reading
+`HidD_GetAttributes().VersionNumber` and dividing by 100 is right. **[CAP]**
+
+**The device accepts the command and then leaves.** The `SET_REPORT` completes
+with `USBD_STATUS_SUCCESS`. The host then issues the `GET_REPORT` to read the
+status, and that request never completes — it and every pending endpoint are
+cancelled 2.5 s later with `USBD_STATUS_CANCELED`. A device told to reboot into
+its bootloader, which then stops answering on the old identity, is behaving
+correctly; the tool's own error message is just the least informative way it
+could have said so. **[CAP]**
+
+### The trap for anyone repeating this in a VM
+
+The mouse did not come back, and the bootloader never appeared in the capture.
+**This is a USB passthrough artefact, not a device fault.** The bootloader is a
+*different USB device* — `3367:1971`, §4 — so a hypervisor rule that forwards
+`3367:1972` stops forwarding at exactly the moment the update begins. From
+inside the guest the device simply vanishes mid-conversation.
+
+To capture a whole update in a VM the passthrough must forward **both**
+identities, or better, forward the physical port rather than a VID/PID pair.
+Otherwise every attempt will fail at the same place, and it will look like the
+device is refusing the command when in fact it obeyed it.
+
+The upside is that the state this leaves behind is the one §4 calls recoverable:
+the mouse should be sitting in DFU mode as `3367:1971`, which the updater
+explicitly probes for and handles by flashing directly, skipping the
+enter-bootloader step. Re-running the updater with that identity passed through
+should both recover the mouse and capture the part that matters.
