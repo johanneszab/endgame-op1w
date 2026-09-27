@@ -91,7 +91,8 @@ issue `GET_REPORT`, and the device fills it in:
 ```
 offset  size  field
    0     1    report ID echo
-   1     1    status:  0x01 = ready/OK,  0x03 = busy — retry
+   1     1    status:  0x01 = ready/OK,  0x03 = busy — retry,
+                         0x07 = not applicable on this connection (§13)
   16    ..    payload
 ```
 
@@ -1191,27 +1192,71 @@ back.
 
 ---
 
-## 13. Cabled operation is not supported by this tool
+## 13. Cabled operation
 
-Connecting an OP1w 4k v1 by USB-C and running `egg-cli info` against it fails
-with "found the device but no interface answered a probe": `enumerate()` finds
-`3367:1972` and every HID collection is present, but the `0x0F` liveness probe
-goes unanswered. **[DEV]**
+A mouse connected by USB-C instead of through the dongle speaks the same
+configuration protocol, and this tool now supports it: `egg-cli info`, `show`
+and `blob` all work against a cabled OP1w 4k v1. **[DEV]**
 
-The cause is almost certainly the target byte. `0x0F` with target `0x01`, then
-`0x0F`, is the *wireless* convention — those values select the mouse behind the
-dongle. Over a cable there is no dongle, and the firmware updater, which is
-cable-only, uses none of that machinery: no `0x0F` probe, no `0x0E`, no `0xB4`,
-and its enter-bootloader command carries target byte `0x00`
-(`firmware/FIRMWARE.md` §3). **[BIN]**
+### Two commands are refused, with a status code we had not seen
 
-So the code paths that imply cabled support — `ModelInfo::cabledPid`,
-`enumerate()` iterating the cabled PIDs, `identifyModel()`'s wired branch, and
-all four cabled PIDs in the udev rule — have never worked and have never been
-tested. What target byte a cabled mouse expects for the *config* protocol is
-unestablished; the firmware capture will not answer it, because that runs the
-`0xA0` bootloader protocol rather than the `0xA1` config one.
+Sweeping every command against every target byte on a cabled v1 gives:
 
-Settling it means a short probe sweep over target bytes on a cabled mouse,
-reading only. Until then, treat cabled operation as unimplemented rather than
-broken-but-nearly-working.
+| cmd | target `0x00` | `0x01` | `0x0F` |
+|---|---|---|---|
+| `0x0F` probe | **`0x07`** | **`0x07`** | **`0x07`** |
+| `0x0D` dongle info | **`0x07`** | **`0x07`** | **`0x07`** |
+| `0x0E` mouse info | `0x01` | `0x01` | `0x01` |
+| `0xB4` battery | `0x01` | `0x01` | `0x01` |
+
+So **`0x07` is a fourth status code**, meaning something like "not applicable on
+this connection". Both commands it rejects are about the radio link: `0x0D`
+reports the dongle's firmware, and `0x0F` selects which device behind the
+dongle a command is for. Over a cable there is no dongle for either to talk
+about. **[DEV]**
+
+### The target byte is ignored, not wrong
+
+An earlier version of this section guessed that a cabled mouse wanted target
+`0x00`, by analogy with the firmware updater, which is cable-only and uses
+`0x00`. That guess was wrong. `0x0E` and `0xB4` answer **identically for all
+three target values**, so a cabled mouse ignores the selector entirely — there
+is nothing to select. Nothing needs to change about how commands are addressed.
+
+### What actually had to change
+
+One thing: the liveness probe. `Device::probe()` issued only cmd `0x0F`, which
+is precisely one of the two commands a cabled mouse refuses, so `open()`
+rejected a perfectly healthy device. It now falls back to `0x0E`, which answers
+on both connections.
+
+The fallback is tried **second**, so the wireless path is unchanged — including
+the case that matters, a sleeping mouse, where `0x0F` answers from the dongle
+and `0x0E` does not (§12).
+
+### What a cabled mouse reports differently
+
+- **No dongle firmware.** `0x0D` is refused, so that field is simply absent.
+- **Battery reads 100 % and the signal figure is meaningless.** The mouse is
+  charging, and there is no radio link to measure. Observed `0x64` (100) and a
+  signal byte drifting around `0x75`.
+- `0x0E` payload `+6..+7` still carries the firmware version, which is how the
+  model is identified either way.
+
+### A formatting bug this uncovered
+
+The firmware version is **hex digits, not a decimal pair**: 1.10 is `0x0110`,
+1.08 is `0x0108`. That is why the vendor's updater formats the whole
+`bcdDevice` with `"%x"` before dividing by 100 (`firmware/FIRMWARE.md` §9).
+
+`Version::toString()` printed the minor byte as decimal, so firmware 1.10 came
+out as **"1.16"**. The bug was invisible for the life of the project because
+every firmware seen until now — 1.01, 1.07, 1.08 — has a minor digit of 9 or
+less, where the two readings agree. Updating a mouse to 1.10 is what exposed
+it. **[DEV]**
+
+### Still untested
+
+Writing over a cable. Reads are confirmed; the three write blocks are not, and
+nothing in the protocol suggests they would differ, which is exactly the kind
+of assumption this document exists to avoid recording as fact.

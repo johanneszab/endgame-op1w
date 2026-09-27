@@ -64,7 +64,8 @@ def describe_device_descriptor(p):
     if len(p) < 18 or p[0] != 0x12 or p[1] != 0x01:
         return None
     vid, pid, bcd = struct.unpack_from('<HHH', p, 8)
-    return 'DEVICE  VID %04X  PID %04X  bcdDevice %04X (firmware %d.%02d)' % (
+    # Hex digits, not decimal: 0x0110 is firmware 1.10, not 1.16.
+    return 'DEVICE  VID %04X  PID %04X  bcdDevice %04X (firmware %x.%02x)' % (
         vid, pid, bcd, bcd >> 8, bcd & 0xFF)
 
 

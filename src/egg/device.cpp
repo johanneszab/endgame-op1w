@@ -69,7 +69,17 @@ const ModelInfo* modelForMousePid(uint16_t pid)
 
 std::string Version::toString() const
 {
-    return std::to_string(major) + "." + (minor < 10 ? "0" : "") + std::to_string(minor);
+    // The device encodes the version as HEX digits, not a decimal pair: 1.10 is
+    // 0x0110 and 1.08 is 0x0108. The vendor's updater formats the whole
+    // bcdDevice with "%x" and divides by 100, which is the same thing.
+    //
+    // Printing the minor as decimal was wrong and invisible for a year, because
+    // every firmware seen until now had a minor digit of 9 or less, where the
+    // two readings coincide. Firmware 1.10 showed up as "1.16".
+    // re/firmware/FIRMWARE.md section 9. [CAP]
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "%x.%02x", major, minor);
+    return buf;
 }
 
 Device::~Device()
@@ -297,8 +307,20 @@ bool Device::command(Cmd cmd, Target target,
 bool Device::probe()
 {
     Response r;
-    return command(Cmd::Probe, Target::Dongle, &r) ||
-           command(Cmd::Probe, Target::Mouse, &r);
+    // The wireless probe, which is what the vendor tool issues before every
+    // command. Over a dongle this answers even with the mouse asleep.
+    if (command(Cmd::Probe, Target::Dongle, &r) ||
+        command(Cmd::Probe, Target::Mouse, &r)) {
+        return true;
+    }
+
+    // A cabled mouse rejects cmd 0x0F outright with status 0x07, whatever
+    // target byte it is given — there is no dongle for the selector to select.
+    // It answers cmd 0x0E perfectly well, so use that as the liveness test
+    // instead. Tried second so the wireless path keeps its existing behaviour
+    // exactly, including answering while the mouse is asleep, which 0x0E
+    // cannot do. PROTOCOL.md section 13. [DEV]
+    return command(Cmd::MouseInfo, Target::None, &r);
 }
 
 std::optional<Device::BatteryStatus> Device::batteryStatus()
