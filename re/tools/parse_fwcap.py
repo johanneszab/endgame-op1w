@@ -58,7 +58,10 @@ def packets(data):
 
 
 def describe_device_descriptor(p):
-    if len(p) < 18 or p[1] != 0x01:
+    # bLength 0x12 AND bDescriptorType 0x01. Checking only the second byte
+    # matches any response whose status byte is 0x01 (= OK), which is most of
+    # them, and reports every block acknowledgement as a device descriptor.
+    if len(p) < 18 or p[0] != 0x12 or p[1] != 0x01:
         return None
     vid, pid, bcd = struct.unpack_from('<HHH', p, 8)
     return 'DEVICE  VID %04X  PID %04X  bcdDevice %04X (firmware %d.%02d)' % (

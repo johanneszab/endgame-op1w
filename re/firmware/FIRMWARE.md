@@ -385,3 +385,118 @@ the mouse should be sitting in DFU mode as `3367:1971`, which the updater
 explicitly probes for and handles by flashing directly, skipping the
 enter-bootloader step. Re-running the updater with that identity passed through
 should both recover the mouse and capture the part that matters.
+
+---
+
+## 9. Verified against hardware — a complete update, 2026-09-27
+
+An OP1w 4k v1 was flashed 1.08 → 1.10 with the capture running. **The update
+succeeded**, and the trace confirms the protocol end to end. Capture:
+`re/captures/firmware/fw_op1w4k_v108_to_v110_from_bootloader.pcap`
+(474,565 bytes, 896 packets). This run entered through the recovery branch —
+the mouse was already in the bootloader from the previous attempt — so it
+covers everything except `A0 3A`, which §8 captured separately.
+
+### The feasibility claim is proven
+
+The 205 block payloads, reassembled in index order, are **byte-identical to the
+PE resource** that `extract_fw.py` pulls out of the updater: **[CAP]**
+
+```
+205 / 205 records match,  0 mismatches
+length          209,920 = resource length
+sha256 on wire  ad612be22f77907162429e1053a6fad53c91bd59a7f0916c9715970e56aa2b27
+sha256 resource ad612be22f77907162429e1053a6fad53c91bd59a7f0916c9715970e56aa2b27
+```
+
+So §2's central claim — extract the resource, stream it verbatim, no key
+needed — is no longer an inference. A Linux flasher does not have to break the
+encryption, and the extractor picks the right one of the two resources.
+
+### Predictions that held
+
+| prediction (§3, §6) | result |
+|---|---|
+| 205 blocks, indices `0x0034`..`0x0100`, contiguous | exact |
+| block 0 `[2..5]` = `34 00 65 fb`, payload `b2 06 aa d6…` | exact |
+| blocks 1–5 checksums `90 f8`, `a1 f9`, `86 fb`, `96 ef`, `85 e7` | exact |
+| block 204 = index `0x0100`, sum `0x0623` | exact |
+| `[2..3]` is one LE16 crossing the byte boundary at block 204 | confirmed |
+| start `[16]` = `0xCD` = 205 | exact |
+| `A0 09` complete, then re-enumeration, then `A1 13` on the 64-byte report | exact |
+| status byte at response `+1`, `0x01` = OK | exact, all 208 replies |
+
+No block was ever resent and no reply carried the busy code `0x04`, so the
+retry and back-off paths went unexercised.
+
+### Predictions that were wrong
+
+**The start command's `[17..20]` is not zero.** §3 predicted `00 00 00 00` on
+the reasoning that the field is a never-written stack member and Windows
+zero-fills fresh stack pages. On the wire it is `b4 fe ef 00`: **[CAP]**
+
+```
+a0 03 00 00 ... [16]=cd  [17..20]= b4 fe ef 00
+```
+
+`0x00EFFEB4` is a stack address — uninitialised memory, exactly as the analysis
+said, just not zeroed. The load-bearing half of that claim survives and is now
+stronger: **the device accepted the update with garbage in that field**, so it
+is neither a length nor a checksum, and a reimplementation may put anything
+there. Prefer zero.
+
+**The post-update `bcdDevice` is `0x0110`, not `0x6E`.** §6 expected 110
+decimal. The device encodes the version as hex digits — 1.08 is `0x0108`, 1.10
+is `0x0110` — which is precisely why the updater formats it with `"%x"` before
+`_wtol` and the divide by 100. The mechanism §3 described was right; the
+predicted value applied it wrongly. **[CAP]**
+
+### The device says more than the vendor tool reads
+
+§6 asked for the full replies, because the host looks only at byte 1. It was
+worth asking. Every block acknowledgement carries: **[CAP]**
+
+```
+50 01 34 00 00 00 65 fb 00 ...
+│  │  └─┬─┘       └─┬─┘
+│  │    │           └──── the block's 16-bit checksum, echoed
+│  │    └──────────────── the block's destination index, echoed
+│  └───────────────────── status, 0x01 = OK
+└──────────────────────── 0x50, not an echo of the 0xA0 request id
+```
+
+**All 205 replies echoed both the index and the checksum correctly.** A Linux
+flasher can therefore verify each block was received where it was aimed and
+with the payload the device computed the same sum over — a much stronger check
+than the vendor tool's, which discards all of it. Byte 0 is `0x50` on every
+bootloader reply; the one config-protocol reply in the trace (`A1 13`) instead
+echoes `0xA1`.
+
+### The bootloader's USB identity
+
+```
+DEVICE   VID 3367  PID 1971  bcdDevice 0021  iProduct "EGG Bootloader"
+CONFIG   1 interface, 100 mA, bus-powered
+IFACE    #0  alt 0  1 endpoint  class 03 sub 01 proto 02  (HID, boot, mouse)
+HID      bcdHID 0111  wDescriptorLength 68
+ENDPOINT 0x81  interrupt IN  64 bytes  1 ms
+```
+
+**One interface and one endpoint.** The application exposes five HID
+collections and the dongle four, so node selection is fiddly there; on the
+bootloader it is unambiguous — there is exactly one hidraw node. **[CAP]**
+
+The report descriptor's *content* is still missing: the bootloader was already
+enumerated when recording started, so only its length (68 bytes) was injected.
+It is cheap to get and needs no capture — put the mouse in the bootloader on
+Linux and read
+`/sys/class/hidraw/hidrawN/device/report_descriptor`. Note the interface
+declares the boot-mouse subclass and protocol while carrying the vendor feature
+reports, so do not infer the usage page from the interface class.
+
+### Timing
+
+Blocks ran from t=21.9 s to t=56.7 s — 205 blocks in ~34.8 s, ~170 ms each
+against the coded 70 ms, the difference being USB passthrough overhead in the
+VM. Start → first block was 4.2 s. A reimplementation should not assume the
+coded sleeps are minimums.
