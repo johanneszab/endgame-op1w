@@ -90,7 +90,17 @@ private:
                   uint16_t expectSum = 0, bool checkEcho = false,
                   bool checkPrefix = true);
     bool echoTest(const uint8_t* firstBlock);
-    bool enterBootloader();
+    // Sends the reboot command. Deliberately returns nothing: the request's own
+    // result cannot tell "obeyed" from "refused" on either OS, so only the
+    // waitFor() that follows is allowed to decide. See the definition.
+    void enterBootloader();
+    // Why the bootloader failed to appear is worth phrasing differently
+    // depending on whether the request was acknowledged, so record that.
+    bool        enterAcked_ = false;
+    std::string enterAckNote_;
+    // The reason egg-fw could not confirm the reboot, ready to append to a
+    // message that has already said the bootloader did not appear.
+    std::string rebootAdvice() const;
     bool sendStart(size_t blocks);
     bool sendBlock(size_t index, const uint8_t* data);
     bool sendComplete();
@@ -98,6 +108,9 @@ private:
 
     void setError(const std::string& s);
     void setErrorHid(const std::string& s);
+    // hidapi's last error for the open device, as printable ASCII. Empty if
+    // there is none.
+    std::string hidErrorText() const;
     // Appends the DFU recovery paragraph when this run is what put the mouse
     // into the bootloader. Without it, a failure between the reboot and the
     // first block reports an error that never mentions the device is no longer

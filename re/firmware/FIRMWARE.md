@@ -167,6 +167,31 @@ Step (a) carries its magic at `+4`, **not** inside the `+16` payload. Step (h) i
 cmd `0x13` — **factory reset** (`PROTOCOL.md` §3). *The updater wipes the user's
 configuration after flashing;* read and save the config blob first.
 
+### The reboot command's own result means nothing
+
+Step (a) is the one request whose outcome cannot be read from the request. The
+device stops being the device as it obeys, and the two host platforms fail in
+*opposite* directions:
+
+| | what the host sees when the command **works** |
+|---|---|
+| Windows | `HidD_SetFeature` returns SUCCESS; only the following `GET_REPORT` is cancelled **[CAP]** |
+| Linux | `ioctl(HIDIOCSFEATURE)` returns **`-ETIMEDOUT`** after 5 s **[DEV]** |
+
+On Linux the kernel waits for the control transfer's STATUS stage, which a
+rebooting device never sends, so it waits out `USB_CTRL_SET_TIMEOUT` (5 s) and
+reports `Connection timed out`. **An error there is the normal outcome of a
+command that succeeded.** Observed on an OP1w 4k v1 on bare metal: the ioctl
+returned that error while `dmesg` showed the mouse disconnecting and coming back
+as `3367:1971`.
+
+A refusal and a success are therefore indistinguishable from the request on
+either OS. **Only "did the bootloader appear?" can tell them apart**, so that is
+the only thing a reimplementation should branch on. `egg-fw` shipped with this
+wrong — it trusted the Windows behaviour and reported "the mouse refused the
+enter-bootloader command; nothing has been written and it is still running its
+firmware", three false claims about a mouse already sitting in DFU.
+
 Step (c) is read-only and runs *before* the erase, which makes it the right place
 to prove the transport works. No capture contains one — the only captured update
 entered through the recovery branch, which skips it — so its framing came from
@@ -256,6 +281,27 @@ flash into a reported failure, which invites the user to run another
 erase-and-write cycle. `egg-fw` therefore waits far longer than the vendor at
 every step — 30 s for DFU to appear, 45 s for re-enumeration — because waiting
 costs nothing and a false failure does not.
+
+**How long the bootloader takes to appear, measured on bare metal** (Fedora,
+`xhci_hcd`, OP1w 4k v1, from `dmesg`): **[DEV]**
+
+```
+18707.337  usb 1-3: USB disconnect              <- the mouse obeys step (a)
+18712.528  usb 1-3: new full-speed USB device   <- +5.19 s
+18712.853  idProduct=1971  Product: Bootloader  <- +5.52 s
+18712.968  hid-generic ... hidraw0              <- +5.63 s, usable
+```
+
+So a host tool needs **~5.6 s** from losing the mouse to having a node it can
+open — and **the vendor's 3 s budget cannot make it**, since that budget starts
+at the send, which is at or before the disconnect. This does not separate the
+device's boot time from the kernel's enumeration, and it does not need to: the
+figure a reimplementation must cover is the whole interval.
+
+This is the first *controlled* measurement of that interval. An earlier claim of
+the same shape was withdrawn as a VM artefact (§7), and the 30 s `egg-fw` waits
+was justified on the open-retry argument above rather than on any number. The
+number now agrees with it.
 
 ## 4. The three USB identities
 
@@ -471,10 +517,13 @@ been executed by that code, including `A0 01`, which no capture contains.
 Two caveats on that, kept because they are the difference between evidence and a
 green tick:
 
-- **Both runs entered through the recovery branch**, with the mouse already in
-  DFU (the hypervisor drops the device the moment it changes identity, §6.5).
-  `flash()`'s application-mode branch — reboot and flash in one invocation — has
-  still never run end to end, though each of its pieces has.
+- **Both of those runs entered through the recovery branch**, with the mouse
+  already in DFU. `flash()`'s application-mode branch — reboot and flash in one
+  invocation — has since been run on bare metal, and **it did not complete**: the
+  mouse rebooted correctly, but `egg-fw` misread the reboot request's own result
+  as a refusal and gave up (§3). Flashing it a second time succeeded. The
+  misreading is fixed; one invocation carrying the whole sequence has still not
+  been observed to finish.
 - The v2 run was a same-version reflash *without* a before-value, so "reports
   firmware 1.07" is, on its own, the same output a wholly failed write would
   give. What makes it evidence is the v1 run, where the version demonstrably

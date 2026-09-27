@@ -488,7 +488,27 @@ bool Flasher::echoTest(const uint8_t* firstBlock)
     return true;
 }
 
-bool Flasher::enterBootloader()
+// Asking the mouse to reboot is the one command whose own result carries no
+// information, on either OS, because the device stops being the device as it
+// obeys. The two platforms even fail in opposite directions:
+//
+//  - Windows: HidD_SetFeature returns SUCCESS and only the following
+//    GET_REPORT is cancelled when the device re-enumerates. [CAP]
+//  - Linux: ioctl(HIDIOCSFEATURE) waits for the control transfer's STATUS
+//    stage, which a rebooting device never sends, so the kernel waits out
+//    USB_CTRL_SET_TIMEOUT (5 s) and returns -ETIMEDOUT. An *error* here is the
+//    normal outcome of a command that worked perfectly. [DEV]
+//
+// An earlier version trusted the Windows behaviour and failed the run on a
+// write error. On Linux that told the user "the mouse refused the
+// enter-bootloader command; nothing has been written and it is still running
+// its firmware" — three claims, all false, about a mouse that was already
+// sitting in DFU. dmesg showed it disconnect and come back as the bootloader
+// while egg-fw was still blocked in the ioctl that it then reported as a
+// refusal.
+//
+// So this function reports nothing and decides nothing. waitFor() decides.
+void Flasher::enterBootloader()
 {
     uint8_t r[kBldrReportSize] = {};
     r[0] = kBldrReportId;
@@ -496,29 +516,35 @@ bool Flasher::enterBootloader()
     std::memcpy(r + 4, kEnterMagic, sizeof kEnterMagic);
 
     say("asking the mouse to reboot into its bootloader");
-    if (opt_.dryRun) return true;
+    if (opt_.dryRun) return;
 
-    // The device obeys and then stops answering, so the follow-up read failing
-    // is the normal case, not an error. Capture section 8: the SET_REPORT
-    // completes, the GET_REPORT is cancelled when the device re-enumerates.
-    // The WRITE is checked; only the READ is allowed to fail. The capture
-    // shows the SET_REPORT completing with SUCCESS and the following
-    // GET_REPORT being cancelled when the device re-enumerates, so a failed
-    // read is normal and a failed write is not. Conflating them made a refused
-    // command indistinguishable from a rebooting mouse, and the user was told
-    // to go and look at their hypervisor. [CAP]
-    const int written = hid_send_feature_report(dev_, r, kBldrReportSize);
-    if (written < 0) {
-        setErrorHid("the mouse refused the enter-bootloader command; nothing "
-                    "has been written and it is still running its firmware");
-        return false;
-    }
+    enterAcked_ = hid_send_feature_report(dev_, r, kBldrReportSize) >= 0;
+    if (!enterAcked_) enterAckNote_ = hidErrorText();
+
     uint8_t buf[kBldrReportSize];
     std::memset(buf, 0, sizeof buf);
     buf[0] = kBldrReportId;
     hid_get_feature_report(dev_, buf, sizeof buf);   // expected to fail
     close();
-    return true;
+}
+
+// Said only after the bootloader has failed to appear, so it explains an
+// already-stated fact rather than announcing a failure of its own.
+std::string Flasher::rebootAdvice() const
+{
+    std::string s;
+    if (!enterAcked_) {
+        s = "\n  The reboot request itself did not complete";
+        if (!enterAckNote_.empty()) s += " (" + enterAckNote_ + ")";
+        s += ", but on Linux that is also what a mouse rebooting mid-transfer "
+             "looks like, so it does not mean the command was refused.";
+    }
+    s += msg("\n  Run `egg-fw info`: if it reports the bootloader (%04X:%04X), "
+             "run this again and it will flash from there. If this machine is a "
+             "virtual machine, the bootloader is a separate USB device and has "
+             "to be forwarded in its own right — look for it on the host.",
+             kVendorId, opt_.target ? opt_.target->bldrPid : 0);
+    return s;
 }
 
 bool Flasher::sendStart(size_t blocks)
@@ -611,15 +637,12 @@ bool Flasher::enterDfu()
             "into the bootloader.");
         return true;
     }
-    if (!enterBootloader()) return false;
+    enterBootloader();
 
     say("waiting for the bootloader to appear");
     if (!waitFor(found->bldrPid, kBootloaderWaitMs)) {
-        setError(msg("the mouse accepted the reboot command but has not "
-                     "re-appeared as %04X:%04X here. It is a different USB "
-                     "device, so a virtual machine will stop forwarding it at "
-                     "exactly this point — look for it on the host",
-                     kVendorId, found->bldrPid));
+        setError(msg("no bootloader appeared within %d seconds.%s",
+                     kBootloaderWaitMs / 1000, rebootAdvice().c_str()));
         return false;
     }
     return true;
@@ -663,17 +686,15 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
                 "only a real run can enter — re-run with --yes.");
             return true;
         }
-        if (!enterBootloader()) return false;
-        // From here on the mouse is no longer a mouse, and every failure has to
-        // say so. See failed().
+        // Set BEFORE the command, not after: the instant it goes out the mouse
+        // may stop being a mouse, and whether the request was acknowledged does
+        // not change that. Every failure from here has to say so. See failed().
         dfuEnteredHere_ = true;
-        say("waiting for the bootloader to appear — if this machine is a VM, the "
-            "bootloader is a different USB device and has to be forwarded too");
+        enterBootloader();
+        say("waiting for the bootloader to appear");
         if (!opt_.dryRun && !waitFor(opt_.target->bldrPid, kBootloaderWaitMs)) {
-            setError("the mouse accepted the reboot command but did not come "
-                     "back as its bootloader. In a virtual machine that is "
-                     "usually the passthrough: the bootloader is a different "
-                     "USB device and has to be forwarded too");
+            setError(msg("no bootloader appeared within %d seconds.%s",
+                         kBootloaderWaitMs / 1000, rebootAdvice().c_str()));
             return false;
         }
     } else {
@@ -815,21 +836,26 @@ bool Flasher::failed(const std::string& s)
     return false;
 }
 
+std::string Flasher::hidErrorText() const
+{
+    std::string out;
+    if (!dev_) return out;
+    if (const wchar_t* w = hid_error(dev_)) {
+        for (const wchar_t* c = w; *c && out.size() < 160; ++c) {
+            out += (*c < 128) ? char(*c) : '?';
+        }
+    }
+    return out;
+}
+
 // Every I/O failure used to collapse to "write failed" or "no reply", which
 // cannot distinguish a yanked cable from a device refusing the data -- the
 // difference between "plug it back in" and "stop".
 void Flasher::setErrorHid(const std::string& s)
 {
     error_ = s;
-    if (dev_) {
-        if (const wchar_t* w = hid_error(dev_)) {
-            std::string extra;
-            for (const wchar_t* c = w; *c && extra.size() < 160; ++c) {
-                extra += (*c < 128) ? char(*c) : '?';
-            }
-            if (!extra.empty()) error_ += " (" + extra + ")";
-        }
-    }
+    const std::string extra = hidErrorText();
+    if (!extra.empty()) error_ += " (" + extra + ")";
 }
 
 bool Flasher::firmwareOf(uint16_t pid, uint16_t* out)

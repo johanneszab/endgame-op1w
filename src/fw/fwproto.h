@@ -169,11 +169,14 @@ inline constexpr int kReenumerateMs    = 45000;
 // a device specification -- so waiting longer costs nothing, and the
 // alternative is telling a user their successful reboot failed.
 //
-// This comment used to cite a measurement instead: an OP1w 4k v2 that "took
-// longer than 3 s". It did not. That run was in a VM, which stops forwarding
-// the device at exactly this point (FIRMWARE.md §6), so the guest never saw it
-// and no re-enumeration time was measured at all. How long DFU really takes to
-// appear is still unknown; it needs bare metal. [?]
+// Measured on bare metal (v1, xhci, from dmesg): 5.19 s from the mouse
+// disconnecting to the bootloader enumerating, 5.63 s to a usable hidraw node.
+// So the vendor's 3 s genuinely cannot make it. FIRMWARE.md §3. [DEV]
+//
+// That figure is new. This comment previously cited an OP1w 4k v2 that "took
+// longer than 3 s" -- which was a VM artefact, since the hypervisor stops
+// forwarding the device at exactly this point (FIRMWARE.md §6) and the guest
+// never saw it at all. Same conclusion, but the first time on evidence.
 inline constexpr int kBootloaderWaitMs = 30000;
 
 // 16-bit wrapping additive sum, the only integrity check in the protocol.
