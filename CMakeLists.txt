@@ -46,6 +46,19 @@ add_executable(egg-cli src/cli/main.cpp)
 target_link_libraries(egg-cli PRIVATE egg)
 target_compile_options(egg-cli PRIVATE ${EGG_WARNINGS})
 
+# --------------------------------------------------------- firmware tool ---
+#
+# Its own binary, and deliberately not linked against egg: that library picks
+# its hidraw node by usage page, which the dongle also matches. Nothing that
+# writes firmware should be one refactor away from addressing the dongle.
+# See re/firmware/FIRMWARE.md section 5.
+
+add_executable(egg-fw src/fw/main.cpp src/fw/flasher.cpp src/fw/pe.cpp)
+target_include_directories(egg-fw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/fw)
+target_link_libraries(egg-fw PRIVATE PkgConfig::HIDAPI)
+target_compile_options(egg-fw PRIVATE ${EGG_WARNINGS})
+install(TARGETS egg-fw RUNTIME DESTINATION bin)
+
 # -------------------------------------------------------------------- gui ---
 
 find_package(Qt6 6.2 COMPONENTS Widgets QUIET)
