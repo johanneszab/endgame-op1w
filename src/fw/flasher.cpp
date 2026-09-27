@@ -669,13 +669,14 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
     }
 
     if (!openPid(opt_.target->bldrPid, kBootloaderWaitMs)) return false;
-    if (!reportRoutable()) {
-        setError("report 0xA0 does not reach the bootloader on the interface "
-                 "egg-fw selected. Nothing further has been written; the mouse "
-                 "is in its bootloader and the vendor's updater can still "
-                 "recover it");
-        return false;
-    }
+
+    // Deliberately NOT reportRoutable() here. That issues a GET_REPORT with no
+    // preceding SET, and the bootloader refuses it — every GET in the capture
+    // follows a SET, and a freshly entered bootloader has no held response to
+    // return. Verified on hardware: the check failed on a device that then
+    // flashed perfectly well. The echo test below is the right probe for this
+    // mode, because it is a SET followed by a GET, which is the pattern the
+    // device actually implements — and it is what the vendor does. [DEV]
 
     // Read-only, and the last chance to find out that this transport cannot
     // carry report 0xA0 before Start erases anything. A rehearsal runs exactly

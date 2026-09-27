@@ -170,9 +170,12 @@ int cmdInfo()
     std::printf("Product IDs : application %04X, bootloader %04X\n",
                 t->appPid, t->bldrPid);
     if (inBootloader) {
-        std::cout << "\nThe mouse is in its bootloader, which is where an "
-                     "interrupted update leaves\nit. That is recoverable: run "
-                     "egg-fw flash and it writes from the start.\n";
+        std::cout << "\nThat is where an interrupted update leaves it. Running "
+                     "egg-fw flash writes\nfrom the start, which is the vendor "
+                     "updater's own recovery path and is how\nthis project's "
+                     "test mouse was recovered. Whether the bootloader always\n"
+                     "survives a partial image is not proven, so check rather "
+                     "than assume.\n";
     }
     return 0;
 }

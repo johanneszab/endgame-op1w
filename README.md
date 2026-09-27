@@ -143,10 +143,10 @@ flash again — it writes from the start, which is the vendor tool's own recover
 path. Note that `70-endgamegear.rules` must be installed for this to work: the
 bootloader is a different product ID and needs its own rule.
 
-> Only the OP1w 4k (v1) has been flashed end to end with this tool's protocol
-> verified against a capture of a real update. The v2's product IDs are known
-> and the sequence is believed identical, but it has not been done; `egg-fw`
-> says so before it starts. Neither XM2w model is supported at all, because
+> The OP1w 4k (v1) has been flashed end to end **by this tool**, on real
+> hardware, with the device reporting the new version back afterwards. The v2's
+> product IDs are known and the sequence is believed identical, but it has not
+> been done; `egg-fw` says so before it starts. Neither XM2w model is supported at all, because
 > nothing establishes their bootloader identities and guessing at a device
 > about to be overwritten is not worth it.
 

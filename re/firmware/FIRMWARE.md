@@ -559,3 +559,44 @@ Blocks ran from t=21.9 s to t=56.7 s — 205 blocks in ~34.8 s, ~170 ms each
 against the coded 70 ms, the difference being USB passthrough overhead in the
 VM. Start → first block was 4.2 s. A reimplementation should not assume the
 coded sleeps are minimums.
+
+---
+
+## 10. Flashed by this project's own tool, 2026-09-27
+
+`egg-fw` performed a complete update of an OP1w 4k v1 and the device came back
+on firmware 1.10, read from its `bcdDevice` rather than assumed. **[DEV]**
+
+Between two runs, every step in §3 has now been executed by this code:
+
+| step | how it was proven |
+|---|---|
+| `A0 3A` enter bootloader | `egg-fw bootloader --yes`; the mouse rebooted and re-enumerated as `3367:1971` |
+| `A0 01` echo | ran for the first time ever — 1024 bytes returned byte for byte |
+| `A0 03` start | accepted; the device held the reply while erasing, as predicted |
+| `A0 06` × 205 | every block's echoed index **and** checksum verified |
+| `A0 09` complete | acknowledged |
+| re-enumeration | back as `3367:1972`, `bcdDevice 0x0110` |
+| `A1 13` factory reset | sent to the application, after re-enumeration |
+
+The echo command is worth singling out: no capture has ever contained one,
+because the only captured update came in through the recovery branch, which
+skips it. Its framing was built from the disassembly alone and worked
+unmodified — and being read-only, it is the right thing to run before Start
+erases anything.
+
+### An unsolicited `GET_REPORT` fails on the bootloader **[DEV]**
+
+`egg-fw` briefly used a bare `GET_REPORT` of report `0xA0` as a cheap
+"can this node carry the report" probe. It works on the **application** and
+fails on the **bootloader**, which refused it — on a device that then flashed
+perfectly.
+
+Consistent with §3 and with CLAUDE.md invariant 6: every `GET` in the capture
+follows a `SET`, and the device answers by holding its last response. A freshly
+entered bootloader has no last response to hold.
+
+So the probe for that mode is the echo test, which is a `SET` followed by a
+`GET` — the pattern the device actually implements, and the one the vendor
+uses. A rehearsal caught this before anything was erased, which is the whole
+argument for having one.
