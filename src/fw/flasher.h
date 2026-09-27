@@ -57,9 +57,9 @@ public:
     // and is how this project's test mouse was recovered [DEV].
     //
     // That is NOT the same as "cannot be bricked". Whether the bootloader
-    // always survives a half-written application is FIRMWARE.md section 4's
-    // named unknown, and that document records that its own adversarial pass
-    // never ran. Do not let this comment become a guarantee.
+    // always survives a half-written application is FIRMWARE.md §5's named
+    // unknown: no partial write has ever been tested, on purpose. Do not let
+    // this comment become a guarantee.
     bool flash(const std::vector<uint8_t>& image);
 
     // Put the mouse into its bootloader and stop there. Exists so the

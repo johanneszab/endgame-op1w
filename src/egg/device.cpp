@@ -76,7 +76,7 @@ std::string Version::toString() const
     // Printing the minor as decimal was wrong and invisible for a year, because
     // every firmware seen until now had a minor digit of 9 or less, where the
     // two readings coincide. Firmware 1.10 showed up as "1.16".
-    // re/firmware/FIRMWARE.md section 9. [CAP]
+    // re/firmware/FIRMWARE.md §5. [CAP]
     char buf[16];
     std::snprintf(buf, sizeof buf, "%x.%02x", major, minor);
     return buf;

@@ -5,7 +5,7 @@
 // for flashing one: the dongle exposes the same 0xFF01/0x02 collection and the
 // same report IDs, so usage-based selection can attach to 3367:1970 and stream
 // 205 KB of mouse firmware at it. Everything here gates on VID *and* PID.
-// See re/firmware/FIRMWARE.md section 5.
+// See re/firmware/FIRMWARE.md §6.
 //
 // Every constant below is verified against a real update of an OP1w 4k v1 from
 // firmware 1.08 to 1.10, captured in
@@ -25,7 +25,7 @@ inline constexpr uint16_t kVendorId = 0x3367;
 inline constexpr uint16_t kVendorUsagePage = 0xFF01;
 inline constexpr uint16_t kVendorUsage     = 0x0002;
 // The interface the application carries it on. The BOOTLOADER has a single
-// interface numbered 0 (FIRMWARE.md section 9), so this is a ranking hint
+// interface numbered 0 (FIRMWARE.md §4), so this is a ranking hint
 // only -- never a requirement, or a mouse in DFU becomes unreachable.
 inline constexpr int      kVendorInterface = 1;
 
@@ -89,7 +89,7 @@ enum class Cmd : uint8_t {
 
 // The magic that makes the running firmware reboot into DFU. It sits at REPORT
 // bytes +4..+7 -- immediately after the sub-command and the two zero bytes --
-// and NOT inside the +16 payload. FIRMWARE.md section 3 step (a), confirmed
+// and NOT inside the +16 payload. FIRMWARE.md §3 step (a), confirmed
 // byte for byte on the wire in section 8: `a0 3a 00 00 00 5a a5 32`.
 inline constexpr uint8_t kEnterMagic[4] = { 0x00, 0x5A, 0xA5, 0x32 };
 
@@ -159,18 +159,21 @@ inline constexpr int kSlowReplyAttempts = 6;
 inline constexpr int kSlowReplyMs       = 1000;
 // The only end-to-end measurement available shows 19.7 s of guest-observable
 // time between `complete` and the application device reappearing. Some of that
-// is probably VM passthrough rather than the mouse, but FIRMWARE.md section 9
+// is probably VM passthrough rather than the mouse, but FIRMWARE.md §3
 // warns explicitly that the vendor's coded sleeps are not minimums, and a
 // budget with no margin turns a SUCCESSFUL flash into a reported failure --
 // which invites the user to run the whole erase-and-write cycle again. Waiting
 // longer costs nothing here. [CAP]
 inline constexpr int kReenumerateMs    = 45000;
-// The vendor waits 3 s for DFU to appear. That is not enough in practice: an
-// OP1w 4k v2 took longer than 3 s to re-enumerate as its bootloader and egg-fw
-// declared failure on a mouse that had in fact rebooted correctly. Same lesson
-// as kReenumerateMs -- the vendor's coded sleeps are not minimums, and waiting
-// longer costs nothing when the alternative is telling the user a successful
-// reboot failed. [DEV]
+// The vendor waits 3 s for DFU to appear, which is an open-retry budget and not
+// a device specification -- so waiting longer costs nothing, and the
+// alternative is telling a user their successful reboot failed.
+//
+// This comment used to cite a measurement instead: an OP1w 4k v2 that "took
+// longer than 3 s". It did not. That run was in a VM, which stops forwarding
+// the device at exactly this point (FIRMWARE.md §6), so the guest never saw it
+// and no re-enumeration time was measured at all. How long DFU really takes to
+// appear is still unknown; it needs bare metal. [?]
 inline constexpr int kBootloaderWaitMs = 30000;
 
 // 16-bit wrapping additive sum, the only integrity check in the protocol.

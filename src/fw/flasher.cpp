@@ -12,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <thread>
@@ -33,6 +34,35 @@ void put16(uint8_t* p, uint16_t v)
 uint16_t get16(const uint8_t* p)
 {
     return static_cast<uint16_t>(p[0] | (p[1] << 8));
+}
+
+// Most diagnostics in this file are paragraphs, not labels: they tell the user
+// whether the mouse in front of them is recoverable and what to do next. The
+// tail of the string is therefore the part that matters most, and the tail is
+// exactly what a fixed buffer drops. Hand-tuned sizes also go stale the moment
+// a sentence is reworded -- -Wformat-truncation caught three that already had.
+// Format into a string that grows instead, so no advice can be cut off.
+#if defined(__MINGW_PRINTF_FORMAT)
+__attribute__((format(__MINGW_PRINTF_FORMAT, 1, 2)))
+#elif defined(__GNUC__)
+__attribute__((format(printf, 1, 2)))
+#endif
+std::string msg(const char* f, ...)
+{
+    va_list ap, ap2;
+    va_start(ap, f);
+    va_copy(ap2, ap);
+    const int n = std::vsnprintf(nullptr, 0, f, ap);
+    va_end(ap);
+
+    std::string s;
+    if (n > 0) {
+        s.resize(static_cast<size_t>(n) + 1);
+        std::vsnprintf(s.data(), s.size(), f, ap2);
+        s.pop_back();               // drop the terminator vsnprintf wrote
+    }
+    va_end(ap2);
+    return s;
 }
 
 // ---------------------------------------------------------------- sha256 ---
@@ -123,25 +153,19 @@ ImageCheck inspectImage(const std::vector<uint8_t>& image)
         return c;
     }
     if (image.size() % kBlockBytes != 0) {
-        char b[128];
-        std::snprintf(b, sizeof b,
-                      "image is %zu bytes, not a whole number of %zu-byte blocks "
-                      "(the vendor's images always are)",
-                      image.size(), kBlockBytes);
-        c.why = b;
+        c.why = msg("image is %zu bytes, not a whole number of %zu-byte blocks "
+                    "(the vendor's images always are)",
+                    image.size(), kBlockBytes);
         return c;
     }
     c.blocks = image.size() / kBlockBytes;
     if (c.blocks != kImageBlocks) {
-        char b[240];
-        std::snprintf(b, sizeof b,
-                      "image is %zu blocks; every firmware this project has seen "
-                      "is exactly %zu (%zu bytes). A short image would be written "
-                      "and completed, leaving the device half new and half old — "
-                      "nothing downstream can detect that, because the encryption "
-                      "resets every block",
-                      c.blocks, kImageBlocks, kImageBlocks * kBlockBytes);
-        c.why = b;
+        c.why = msg("image is %zu blocks; every firmware this project has seen "
+                    "is exactly %zu (%zu bytes). A short image would be written "
+                    "and completed, leaving the device half new and half old — "
+                    "nothing downstream can detect that, because the encryption "
+                    "resets every block",
+                    c.blocks, kImageBlocks, kImageBlocks * kBlockBytes);
         return c;
     }
 
@@ -160,12 +184,9 @@ ImageCheck inspectImage(const std::vector<uint8_t>& image)
         return c;
     }
     if (c.entropy < 7.5) {
-        char b[160];
-        std::snprintf(b, sizeof b,
-                      "image entropy is %.4f bits/byte; a real image is ~7.98 "
-                      "because it is encrypted. This is probably the wrong blob",
-                      c.entropy);
-        c.why = b;
+        c.why = msg("image entropy is %.4f bits/byte; a real image is ~7.98 "
+                    "because it is encrypted. This is probably the wrong blob",
+                    c.entropy);
         return c;
     }
 
@@ -201,7 +222,7 @@ bool Flasher::openPid(uint16_t pid, int timeoutMs)
     close();
     // Gate hard on VID *and* PID. Never by usage page: the dongle carries the
     // same collection, and streaming firmware at it would brick a different
-    // chip entirely. FIRMWARE.md section 5.
+    // chip entirely. FIRMWARE.md §6.
     if (pid != opt_.target->appPid && pid != opt_.target->bldrPid) {
         setError("refusing to open a product ID that is not this model's mouse "
                  "or its bootloader");
@@ -216,7 +237,7 @@ bool Flasher::openPid(uint16_t pid, int timeoutMs)
     // 3367:1972, GET_REPORT(0xA0) answers on exactly one. [DEV]
     //
     // This is the ranking egg::Device already uses. It does NOT reintroduce
-    // the hazard of FIRMWARE.md section 5, because the dongle is excluded by
+    // the hazard of FIRMWARE.md §6, because the dongle is excluded by
     // product ID above, before usage is looked at at all.
     // hid_enumerate can see a freshly re-enumerated node before udev has
     // applied the uaccess ACL, so a single attempt races the permission
@@ -227,14 +248,11 @@ bool Flasher::openPid(uint16_t pid, int timeoutMs)
         sleepMs(100);
     }
     if (!dev_) {
-        char b[240];
-        std::snprintf(b, sizeof b,
-                      "cannot open the configuration interface of %04X:%04X. "
-                      "Either the udev rule is missing — the bootloader is a "
-                      "separate product ID and needs its own line, see "
-                      "udev/70-endgamegear.rules — or no node on this device "
-                      "carries the vendor collection", kVendorId, pid);
-        setError(b);
+        setError(msg("cannot open the configuration interface of %04X:%04X. "
+                     "Either the udev rule is missing — the bootloader is a "
+                     "separate product ID and needs its own line, see "
+                     "udev/70-endgamegear.rules — or no node on this device "
+                     "carries the vendor collection", kVendorId, pid));
         return false;
     }
     return true;
@@ -259,14 +277,16 @@ void Flasher::tryOpen(uint16_t pid)
     //  - Reports 0xA0/0xA1 live on exactly one node of the application device.
     //    Opening the first that accepts a handle picks the plain mouse
     //    collection and every feature report is refused.
-    //  - The bootloader has a SINGLE interface, numbered 0 (FIRMWARE.md §9),
-    //    and its report descriptor has never been read. An earlier version of
-    //    this function fell back to `interface_number == 1`, which the
-    //    bootloader can never satisfy — so a mouse that had just been put into
-    //    DFU could not be opened, by the tool that put it there.
+    //  - The bootloader has a SINGLE interface, numbered 0, and declares the
+    //    vendor collection SECOND, behind a Generic Desktop / Mouse one
+    //    (FIRMWARE.md §4). An earlier version of this function fell back to
+    //    `interface_number == 1`, which the bootloader can never satisfy — so a
+    //    mouse that had just been put into DFU could not be opened, by the tool
+    //    that put it there. Its report descriptor has since been read and
+    //    confirms both halves of that trap.
     //
     // The hard VID/PID gate in openPid() has already excluded the dongle, so
-    // considering every node of this PID is not FIRMWARE.md §5's hazard.
+    // considering every node of this PID is not FIRMWARE.md §6's hazard.
     hid_device_info* list = hid_enumerate(kVendorId, pid);
 
     const char* fallbackPath = nullptr;
@@ -284,7 +304,7 @@ void Flasher::tryOpen(uint16_t pid)
             // The acceptance test is functional: can this node actually carry
             // report 0xA0? That settles it without trusting a descriptor --
             // but ONLY in application mode. The bootloader refuses an
-            // unsolicited GET (FIRMWARE.md section 10), so in DFU this probe
+            // unsolicited GET (FIRMWARE.md §4), so in DFU this probe
             // always fails and the choice falls to the rank order plus
             // fallbackPath below, which is therefore load-bearing there.
             if (reportRoutable()) {
@@ -342,7 +362,7 @@ bool Flasher::transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
 
         // Busy has its own budget and, like the vendor, is answered by RE-READING
         // rather than re-sending: a resend of a state-changing command is not
-        // established as safe. FIRMWARE.md section 3.
+        // established as safe. FIRMWARE.md §3.
         uint8_t buf[kBldrReportSize];
         int read = -1;
         bool busy = false;
@@ -387,10 +407,8 @@ bool Flasher::transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
         // control read would otherwise present the memset zeros as a real
         // answer -- and an all-zero echo looks exactly like a mismatch.
         if (size_t(read) < kBldrReportSize) {
-            char b[96];
-            std::snprintf(b, sizeof b, "short reply: %d bytes, expected %zu",
-                          read, kBldrReportSize);
-            setError(b);
+            setError(msg("short reply: %d bytes, expected %zu",
+                         read, kBldrReportSize));
             if (!retryOnBadReply) return false;
             sleepMs(kBlockRetryMs);
             continue;
@@ -400,19 +418,15 @@ bool Flasher::transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
         // reading a held response rather than a fresh one (CLAUDE.md
         // invariant 6). Either way, do not act on it.
         if (checkPrefix && buf[0] != kReplyPrefix) {
-            char b[96];
-            std::snprintf(b, sizeof b,
-                          "reply began 0x%02X, expected 0x%02X", buf[0], kReplyPrefix);
-            setError(b);
+            setError(msg("reply began 0x%02X, expected 0x%02X",
+                         buf[0], kReplyPrefix));
             if (!retryOnBadReply) return false;
             sleepMs(kBlockRetryMs);
             continue;
         }
         if (buf[kReplyStatus] != kStatusOk) {
-            char b[96];
-            std::snprintf(b, sizeof b, "device answered status 0x%02X to command 0x%02X",
-                          buf[kReplyStatus], static_cast<unsigned>(cmd));
-            setError(b);
+            setError(msg("device answered status 0x%02X to command 0x%02X",
+                         buf[kReplyStatus], static_cast<unsigned>(cmd)));
             if (!retryOnBadReply) return false;
             sleepMs(kBlockRetryMs);
             continue;
@@ -428,11 +442,9 @@ bool Flasher::transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
             const uint16_t gotIndex = get16(buf + kReplyIndex);
             const uint16_t gotSum   = get16(buf + kReplyChecksum);
             if (gotIndex != expectIndex || gotSum != expectSum) {
-                char b[200];
-                std::snprintf(b, sizeof b,
-                              "device echoed index 0x%04X sum 0x%04X, expected "
-                              "0x%04X / 0x%04X", gotIndex, gotSum, expectIndex, expectSum);
-                setError(b);
+                setError(msg("device echoed index 0x%04X sum 0x%04X, expected "
+                             "0x%04X / 0x%04X",
+                             gotIndex, gotSum, expectIndex, expectSum));
                 sleepMs(kBlockRetryMs);
                 continue;
             }
@@ -447,7 +459,7 @@ bool Flasher::transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
 // The vendor's loopback check: send the first block through the echo command,
 // which writes nothing, and require it back byte for byte. It is the only
 // read-only proof that report 0xA0 actually reaches this device before Start
-// erases the application region. FIRMWARE.md section 3 step (c).
+// erases the application region. FIRMWARE.md §3 step (c).
 bool Flasher::echoTest(const uint8_t* firstBlock)
 {
     uint8_t r[kBldrReportSize] = {};
@@ -520,7 +532,7 @@ bool Flasher::sendStart(size_t blocks)
     r[kPayload] = static_cast<uint8_t>(blocks & 0xFF);
     // Payload +1..+4 is an uninitialised stack member in the vendor tool -- the
     // capture shows it sending a stack address, and the device accepted it. We
-    // send zero. FIRMWARE.md section 9.
+    // send zero. FIRMWARE.md §3.
     //
     // No resend: Start erases the application region (the capture shows the
     // device holding the reply for 3.9 s doing exactly that), and re-issuing a
@@ -538,11 +550,9 @@ bool Flasher::sendBlock(size_t i, const uint8_t* data)
     // emit an index outside the range the vendor flow uses: below it lies the
     // bootloader, above it flash nobody has mapped, and neither has a fallback.
     if (index < kFirstBlockIndex || index > kLastBlockIndex) {
-        char b[128];
-        std::snprintf(b, sizeof b,
-                      "refusing to write block %zu at index 0x%04X, outside the "
-                      "range 0x%04X..0x%04X", i, index, kFirstBlockIndex, kLastBlockIndex);
-        setError(b);
+        setError(msg("refusing to write block %zu at index 0x%04X, outside the "
+                     "range 0x%04X..0x%04X",
+                     i, index, kFirstBlockIndex, kLastBlockIndex));
         return false;
     }
     if (opt_.dryRun) return true;
@@ -556,7 +566,7 @@ bool Flasher::sendBlock(size_t i, const uint8_t* data)
 
     // Resend IS safe here, and the echo is verified inside the retry loop: the
     // block carries its own destination index, so a repeat lands in the same
-    // place and is idempotent. FIRMWARE.md section 3.
+    // place and is idempotent. FIRMWARE.md §3.
     return transact(Cmd::WriteBlock, r, nullptr, /*retryOnBadReply=*/true,
                     index, sum, /*checkEcho=*/true);
 }
@@ -605,14 +615,11 @@ bool Flasher::enterDfu()
 
     say("waiting for the bootloader to appear");
     if (!waitFor(found->bldrPid, kBootloaderWaitMs)) {
-        char b[320];
-        std::snprintf(b, sizeof b,
-                      "the mouse accepted the reboot command but has not "
-                      "re-appeared as %04X:%04X here. It is a different USB "
-                      "device, so a virtual machine will stop forwarding it at "
-                      "exactly this point — look for it on the host",
-                      kVendorId, found->bldrPid);
-        setError(b);
+        setError(msg("the mouse accepted the reboot command but has not "
+                     "re-appeared as %04X:%04X here. It is a different USB "
+                     "device, so a virtual machine will stop forwarding it at "
+                     "exactly this point — look for it on the host",
+                     kVendorId, found->bldrPid));
         return false;
     }
     return true;
@@ -627,13 +634,10 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
     const Target* found = detect(&inBootloader);
     if (!found) { setError("no supported mouse found"); return false; }
     if (found != opt_.target) {
-        char b[240];
-        std::snprintf(b, sizeof b,
-                      "a %s is plugged in, but this firmware is for the %s. "
-                      "The image is encrypted and identifies nothing by itself, "
-                      "so egg-fw will not flash it at a mouse it was not built "
-                      "for", found->name, opt_.target->name);
-        setError(b);
+        setError(msg("a %s is plugged in, but this firmware is for the %s. "
+                     "The image is encrypted and identifies nothing by itself, "
+                     "so egg-fw will not flash it at a mouse it was not built "
+                     "for", found->name, opt_.target->name));
         return false;
     }
 
@@ -700,36 +704,30 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
 
     say("erasing and starting — the device holds this reply while it erases");
     if (!sendStart(chk.blocks)) {
-        char b[420];
-        std::snprintf(b, sizeof b,
-                      "the start command was not acknowledged: %s.\n"
-                      "  Treat the application region as ALREADY ERASED — that "
-                      "is what the device does while holding this reply. The "
-                      "mouse should be in its bootloader as %04X:%04X; check "
-                      "with `egg-fw info` and run this again, which writes from "
-                      "the start. Do not unplug it on the assumption that "
-                      "nothing happened.",
-                      error_.c_str(), kVendorId, opt_.target->bldrPid);
-        setError(b);
+        setError(msg("the start command was not acknowledged: %s.\n"
+                     "  Treat the application region as ALREADY ERASED — that "
+                     "is what the device does while holding this reply. The "
+                     "mouse should be in its bootloader as %04X:%04X; check "
+                     "with `egg-fw info` and run this again, which writes from "
+                     "the start. Do not unplug it on the assumption that "
+                     "nothing happened.",
+                     error_.c_str(), kVendorId, opt_.target->bldrPid));
         return false;
     }
 
     for (size_t i = 0; i < chk.blocks; ++i) {
         if (!sendBlock(i, image.data() + i * kBlockBytes)) {
-            char b[400];
-            std::snprintf(b, sizeof b,
-                          "block %zu of %zu failed: %s.\n"
-                          "  The mouse should now be sitting in its bootloader as "
-                          "%04X:%04X — run `egg-fw info` to confirm. If it is, "
-                          "running this again flashes from the start, which is "
-                          "the vendor tool's own recovery path and is how this "
-                          "project's test mouse was recovered. Whether the "
-                          "bootloader always survives a half-written image is "
-                          "not proven (FIRMWARE.md section 4), so check before "
-                          "assuming.",
-                          i, chk.blocks, error_.c_str(),
-                          kVendorId, opt_.target->bldrPid);
-            setError(b);
+            setError(msg("block %zu of %zu failed: %s.\n"
+                         "  The mouse should now be sitting in its bootloader as "
+                         "%04X:%04X — run `egg-fw info` to confirm. If it is, "
+                         "running this again flashes from the start, which is "
+                         "the vendor tool's own recovery path and is how this "
+                         "project's test mouse was recovered. Whether the "
+                         "bootloader always survives a half-written image is "
+                         "not proven (FIRMWARE.md §5), so check before "
+                         "assuming.",
+                         i, chk.blocks, error_.c_str(),
+                         kVendorId, opt_.target->bldrPid));
             return false;
         }
         if (progress) progress(i + 1, chk.blocks);
@@ -747,17 +745,14 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
     say("waiting for the mouse to come back");
     close();
     if (!waitFor(opt_.target->appPid, kReenumerateMs)) {
-        char b[400];
-        std::snprintf(b, sizeof b,
-                      "every block was written and acknowledged, but the mouse "
-                      "has not re-appeared as %04X:%04X within %d seconds.\n"
-                      "  This is the one state that cannot be told apart from "
-                      "the outside (FIRMWARE.md section 4). Check `egg-fw info`: "
-                      "if it reports the bootloader, re-run this; if it reports "
-                      "nothing, re-seat the cable first. Do NOT assume the "
-                      "update failed — it may simply be slow to enumerate.",
-                      kVendorId, opt_.target->appPid, kReenumerateMs / 1000);
-        setError(b);
+        setError(msg("every block was written and acknowledged, but the mouse "
+                     "has not re-appeared as %04X:%04X within %d seconds.\n"
+                     "  This is the one state that cannot be told apart from "
+                     "the outside (FIRMWARE.md §5). Check `egg-fw info`: "
+                     "if it reports the bootloader, re-run this; if it reports "
+                     "nothing, re-seat the cable first. Do NOT assume the "
+                     "update failed — it may simply be slow to enumerate.",
+                     kVendorId, opt_.target->appPid, kReenumerateMs / 1000));
         return false;
     }
 
@@ -767,23 +762,22 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
     // the positive control.
     uint16_t after = 0;
     if (firmwareOf(opt_.target->appPid, &after)) {
-        char b[200];
+        std::string note;
         if (haveBefore && after == before) {
             // NOT a failure. There is no version gating in this protocol --
-            // FIRMWARE.md section 4: "no 'already up to date' string in the
+            // FIRMWARE.md §5: "no 'already up to date' string in the
             // binary. Clicking the button always flashes" -- so re-flashing
             // the version already installed is legitimate, and is the natural
             // repair action. Reporting it as failure would invite another
             // erase-and-write cycle.
-            std::snprintf(b, sizeof b,
-                          "the mouse reports firmware %x.%02x, the same version "
-                          "as before — expected if you re-flashed the version it "
-                          "already had", after >> 8, after & 0xFF);
+            note = msg("the mouse reports firmware %x.%02x, the same version "
+                       "as before — expected if you re-flashed the version it "
+                       "already had", after >> 8, after & 0xFF);
         } else {
-            std::snprintf(b, sizeof b, "the mouse reports firmware %x.%02x",
-                          after >> 8, after & 0xFF);
+            note = msg("the mouse reports firmware %x.%02x",
+                       after >> 8, after & 0xFF);
         }
-        say(b);
+        say(note);
     }
 
     if (opt_.factoryReset) {
@@ -809,17 +803,14 @@ bool Flasher::failed(const std::string& s)
 {
     error_ = s;
     if (dfuEnteredHere_ && opt_.target) {
-        char b[420];
-        std::snprintf(b, sizeof b,
-                      "\n  Note: this run rebooted the mouse into its "
+        error_ += msg("\n  Note: this run rebooted the mouse into its "
                       "bootloader, so it is now %04X:%04X and is not acting as "
                       "a mouse. No firmware bytes were written. Confirm with "
                       "`egg-fw info` and run this again — that writes from the "
                       "start and is the vendor updater's own recovery path. "
                       "Whether the bootloader always survives is not proven "
-                      "(FIRMWARE.md section 4), so check rather than assume.",
+                      "(FIRMWARE.md §5), so check rather than assume.",
                       kVendorId, opt_.target->bldrPid);
-        error_ += b;
     }
     return false;
 }

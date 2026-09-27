@@ -51,7 +51,7 @@ target_compile_options(egg-cli PRIVATE ${EGG_WARNINGS})
 # Its own binary, and deliberately not linked against egg: that library picks
 # its hidraw node by usage page, which the dongle also matches. Nothing that
 # writes firmware should be one refactor away from addressing the dongle.
-# See re/firmware/FIRMWARE.md section 5.
+# See re/firmware/FIRMWARE.md §6.
 
 add_executable(egg-fw src/fw/main.cpp src/fw/flasher.cpp src/fw/pe.cpp)
 target_include_directories(egg-fw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/fw)

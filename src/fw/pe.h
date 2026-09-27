@@ -3,7 +3,7 @@
 //
 // A port of re/tools/extract_fw.py. The two are kept deliberately equivalent
 // and are tested against each other on every updater we have — see
-// re/firmware/FIRMWARE.md section 2. If you change the selection rule here,
+// re/firmware/FIRMWARE.md §2. If you change the selection rule here,
 // change it there, and re-run the comparison.
 //
 // The reason this is not simply "take the FWFILE resource": one updater ships

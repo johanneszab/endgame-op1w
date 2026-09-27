@@ -23,7 +23,7 @@ USBD = {
     0x80000300: 'PENDING/ERROR',
 }
 
-# Report 0xA0 sub-commands, FIRMWARE.md section 3.
+# Report 0xA0 sub-commands, FIRMWARE.md §3.
 BLDR = {
     0x01: 'echo test',
     0x03: 'start',

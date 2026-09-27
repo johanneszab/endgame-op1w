@@ -1247,7 +1247,7 @@ and `0x0E` does not (§12).
 
 The firmware version is **hex digits, not a decimal pair**: 1.10 is `0x0110`,
 1.08 is `0x0108`. That is why the vendor's updater formats the whole
-`bcdDevice` with `"%x"` before dividing by 100 (`firmware/FIRMWARE.md` §9).
+`bcdDevice` with `"%x"` before dividing by 100 (`firmware/FIRMWARE.md` §5).
 
 `Version::toString()` printed the minor byte as decimal, so firmware 1.10 came
 out as **"1.16"**. The bug was invisible for the life of the project because
