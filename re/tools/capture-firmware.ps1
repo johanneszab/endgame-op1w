@@ -40,11 +40,23 @@ $safe = ($Label -replace '[^A-Za-z0-9_.-]', '_')
 $file = Join-Path $OutDir ("fw_{0}.pcap" -f $safe)
 if (Test-Path $file) { throw "$file already exists - pick another label rather than overwriting a one-shot capture." }
 
-# No --devices filter: we must see the bootloader device that appears mid-session.
+# -A is load-bearing and not optional. Omitting --devices does NOT mean "capture
+# everything" -- USBPcap then captures nothing and exits with
+# "Selected capture options result in empty capture", which is how this script
+# failed the first time it was used for real. We need every device on the root
+# hub because the mouse re-enumerates as the bootloader (3367:1971) partway
+# through, and a device-address filter would drop exactly the half we want.
+#
+# --inject-descriptors writes the descriptors of already-connected devices into
+# the capture. Without it we would get the bootloader's descriptors (it enumerates
+# while recording) but not the application-mode mouse's, which enumerated before.
+#
 # 64 MB kernel buffer so a burst of firmware chunks cannot overrun it.
 $args = @(
   '-d', $Iface,
   '-o', $file,
+  '-A',
+  '--inject-descriptors',
   '--snaplen', '65535',
   '--bufferlen', '67108864'
 )

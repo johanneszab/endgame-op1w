@@ -1188,3 +1188,30 @@ Two of those are gates on *offering* the setting rather than on the write:
 A client keeps them correct by never letting the UI change a field the model
 does not implement, so the value read from the device is the value written
 back.
+
+---
+
+## 13. Cabled operation is not supported by this tool
+
+Connecting an OP1w 4k v1 by USB-C and running `egg-cli info` against it fails
+with "found the device but no interface answered a probe": `enumerate()` finds
+`3367:1972` and every HID collection is present, but the `0x0F` liveness probe
+goes unanswered. **[DEV]**
+
+The cause is almost certainly the target byte. `0x0F` with target `0x01`, then
+`0x0F`, is the *wireless* convention — those values select the mouse behind the
+dongle. Over a cable there is no dongle, and the firmware updater, which is
+cable-only, uses none of that machinery: no `0x0F` probe, no `0x0E`, no `0xB4`,
+and its enter-bootloader command carries target byte `0x00`
+(`firmware/FIRMWARE.md` §3). **[BIN]**
+
+So the code paths that imply cabled support — `ModelInfo::cabledPid`,
+`enumerate()` iterating the cabled PIDs, `identifyModel()`'s wired branch, and
+all four cabled PIDs in the udev rule — have never worked and have never been
+tested. What target byte a cabled mouse expects for the *config* protocol is
+unestablished; the firmware capture will not answer it, because that runs the
+`0xA0` bootloader protocol rather than the `0xA1` config one.
+
+Settling it means a short probe sweep over target bytes on a cabled mouse,
+reading only. Until then, treat cabled operation as unimplemented rather than
+broken-but-nearly-working.
