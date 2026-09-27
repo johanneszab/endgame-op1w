@@ -20,6 +20,11 @@ namespace fw {
 
 inline constexpr uint16_t kVendorId = 0x3367;
 
+// The collection that carries reports 0xA0 and 0xA1. Only one node of the
+// application device declares them; see Flasher::tryOpen. [HID]
+inline constexpr uint16_t kVendorUsagePage = 0xFF01;
+inline constexpr uint16_t kVendorUsage     = 0x0002;
+
 // A mouse and the bootloader it reboots into are two different USB devices.
 struct Target {
     uint16_t    appPid;     // the mouse running its firmware
@@ -27,6 +32,11 @@ struct Target {
     const char* name;
     const char* key;        // what the user types for --model
     bool        verified;   // has a full flash actually been done on this one?
+    // sha256 of one image known to belong to this model. NOT an allowlist --
+    // a later firmware will hash differently and must still be flashable. It
+    // exists to make a positive identification of the WRONG file: an image
+    // that hashes to another model's known image is refused outright.
+    const char* knownImageSha256;
 };
 
 // Only models whose bootloader identity is known. The XM2w pair is deliberately
@@ -34,11 +44,13 @@ struct Target {
 // one" at a device that is about to be overwritten is not a risk worth taking.
 inline constexpr Target kTargets[] = {
     // OP1w 4k v1. Flashed end to end on hardware. [CAP]
-    { 0x1972, 0x1971, "OP1w 4k",    "op1w4k",   true  },
+    { 0x1972, 0x1971, "OP1w 4k",    "op1w4k",   true,
+      "ad612be22f77907162429e1053a6fad53c91bd59a7f0916c9715970e56aa2b27" },
     // OP1w 4k v2. The bootloader PID is read from cmd 0x0E payload +4..+5 on a
     // real v2 [DEV], but no update has been captured, so the sequence below is
     // assumed rather than observed for this model.
-    { 0x1984, 0x1983, "OP1w 4k v2", "op1w4kv2", false },
+    { 0x1984, 0x1983, "OP1w 4k v2", "op1w4kv2", false,
+      "92605563e19b2f933951d3766835bbc99fd0a16d6452c2abbab7632f3393ab85" },
 };
 
 // ------------------------------------------------------------ transport ---
@@ -102,15 +114,35 @@ inline constexpr size_t kReqChecksum = 4;   // u16 le, additive sum of the 1024
 // does, and whether the device range-checks one is unknown. [BIN]
 inline constexpr uint16_t kFirstBlockIndex = 0x0034;
 
-// The start command sends the block count as ONE byte, so the device cannot be
-// told about more than 255 blocks. [BIN]
-inline constexpr size_t kMaxBlocks = 255;
+// The one geometry ever observed. All seven images across both vendor updaters
+// are exactly 209,920 bytes, and the capture shows indices 0x0034..0x0100 with
+// 0x0100 the single record past the 0x34..0xFF application region. [CAP]
+//
+// Bounding by the start command's one-byte count instead (255) would be the
+// wrong check twice over: it would accept a TRUNCATED image, which decrypts
+// and checksums perfectly because nothing chains across records, leaving the
+// device half new and half old; and it would accept an oversized one, writing
+// past 0x0100 into flash nobody has mapped, for which there is no DFU
+// fallback. Require the exact shape and say so when refusing.
+inline constexpr size_t   kImageBlocks    = 205;
+inline constexpr uint16_t kLastBlockIndex = 0x0100;
 
 // Retry rules, from the vendor tool. [BIN]
 inline constexpr int kBlockAttempts    = 5;
 inline constexpr int kBlockRetryMs     = 70;
 inline constexpr int kBusyRetryMs      = 100;
-inline constexpr int kReenumerateMs    = 5000;  // wait for the app to come back
+inline constexpr int kBusyAttempts     = 8;   // budget of its own; busy is not a failure
+// The vendor paces blocks 70 ms apart. Our loop had no delay at all, which is
+// the most likely way to provoke the busy path we are least sure about.
+inline constexpr int kBlockPaceMs      = 70;
+// The only end-to-end measurement available shows 19.7 s of guest-observable
+// time between `complete` and the application device reappearing. Some of that
+// is probably VM passthrough rather than the mouse, but FIRMWARE.md section 9
+// warns explicitly that the vendor's coded sleeps are not minimums, and a
+// budget with no margin turns a SUCCESSFUL flash into a reported failure --
+// which invites the user to run the whole erase-and-write cycle again. Waiting
+// longer costs nothing here. [CAP]
+inline constexpr int kReenumerateMs    = 45000;
 inline constexpr int kBootloaderWaitMs = 3000;  // wait for DFU to appear
 
 // 16-bit wrapping additive sum, the only integrity check in the protocol.

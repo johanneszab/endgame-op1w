@@ -52,19 +52,34 @@ public:
     // The whole sequence: enter the bootloader if the mouse is running its
     // firmware, stream the image, complete, wait for the mouse to come back.
     //
-    // Safe to re-run after a failure. A half-written image leaves the device in
-    // the bootloader, which this will find and flash directly — that is exactly
-    // what the vendor tool's own recovery branch does, and what recovered this
-    // project's test mouse. [BIN]
+    // Re-runnable after a failure: a device left in the bootloader is found and
+    // flashed directly, which is the vendor tool's own recovery branch [BIN]
+    // and is how this project's test mouse was recovered [DEV].
+    //
+    // That is NOT the same as "cannot be bricked". Whether the bootloader
+    // always survives a half-written application is FIRMWARE.md section 4's
+    // named unknown, and that document records that its own adversarial pass
+    // never ran. Do not let this comment become a guarantee.
     bool flash(const std::vector<uint8_t>& image);
 
 private:
-    bool openPid(uint16_t pid);
+    bool openPid(uint16_t pid, int timeoutMs = 0);
+    void tryOpen(uint16_t pid);
+    bool reportRoutable();
     void close();
+    // Reads the device's bcdDevice without opening it, so a flash can report
+    // the version before and after instead of asserting success.
+    static bool firmwareOf(uint16_t pid, uint16_t* out);
     bool waitFor(uint16_t pid, int timeoutMs);
 
     // One request/reply round trip on the 0xA0 report. `reply` may be null.
-    bool transact(Cmd cmd, const uint8_t* report, uint8_t* reply);
+    // One request/reply round trip. `retryOnBadReply` distinguishes a block
+    // write, where a resend is safe because the block carries its own
+    // destination, from Start and Complete, where it is not established.
+    bool transact(Cmd cmd, const uint8_t* report, uint8_t* reply,
+                  bool retryOnBadReply, uint16_t expectIndex = 0,
+                  uint16_t expectSum = 0, bool checkEcho = false);
+    bool echoTest(const uint8_t* firstBlock);
     bool enterBootloader();
     bool sendStart(size_t blocks);
     bool sendBlock(size_t index, const uint8_t* data);
@@ -72,6 +87,7 @@ private:
     bool sendFactoryReset();
 
     void setError(const std::string& s);
+    void setErrorHid(const std::string& s);
     void say(const std::string& s) const { if (log) log(s); }
 
     Options     opt_;

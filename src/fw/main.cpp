@@ -249,23 +249,48 @@ int cmdFlash(std::vector<std::string> args)
     const ImageCheck c = inspectImage(l.image);
     if (!c.ok) return die(c.why);
 
-    // Resolve which mouse this image is for, preferring what the updater says
-    // about itself over what the user typed.
-    const Target* asked = nullptr;
+    // Which mouse is this for? Only the updater executable can answer, and
+    // that answer is not negotiable.
+    //
+    // --model used to be able to SUBSTITUTE for this when the input was a raw
+    // image, which meant a v2 image plus `--model op1w4k` passed every guard:
+    // the attached mouse matched what the user typed, and nothing ever checked
+    // that the bytes belonged to it. So `flash` now takes a vendor .exe only.
+    // `extract` remains for inspection.
+    if (!l.fromExe) {
+        return die("flash needs the vendor's updater .exe, not a raw image. A "
+                   "raw image is encrypted and identifies neither its model nor "
+                   "its version, so nothing can check it is the right one for "
+                   "the mouse in front of you. Use `egg-fw extract` if you want "
+                   "to inspect the image itself");
+    }
+    if (!l.declared) {
+        return die("this updater does not name any mouse egg-fw supports. "
+                   "Refusing rather than guessing — an updater for a model that "
+                   "is not in the table may use a different bootloader identity "
+                   "or a different sequence entirely");
+    }
+    opt.target = l.declared;
+
     if (!model.empty()) {
+        const Target* asked = nullptr;
         for (const Target& t : kTargets) if (model == t.key) asked = &t;
-        if (!asked) return die("unknown model " + model);
+        if (!asked)             return die("unknown model " + model);
+        if (asked != l.declared) {
+            return die(std::string("the updater is for the ") + l.declared->name +
+                       " but --model says " + asked->name);
+        }
     }
-    if (l.declared && asked && l.declared != asked) {
-        return die(std::string("the updater is for the ") + l.declared->name +
-                   " but --model says " + asked->name);
-    }
-    opt.target = l.declared ? l.declared : asked;
-    if (!opt.target) {
-        return die("cannot tell which mouse this image is for. Pass the vendor's "
-                   "updater .exe, which names its model, or say --model "
-                   "explicitly — the firmware image itself is encrypted and "
-                   "identifies nothing");
+
+    // A positive identification of the wrong file: this image is known to
+    // belong to a DIFFERENT model. Not an allowlist -- an unrecognised hash is
+    // fine, because a newer firmware will have one.
+    for (const Target& t : kTargets) {
+        if (&t != opt.target && t.knownImageSha256 && c.sha256 == t.knownImageSha256) {
+            return die(std::string("this image is a known ") + t.name +
+                       " firmware, but the updater claims to be for the " +
+                       opt.target->name + ". Something is inconsistent; refusing");
+        }
     }
 
     describe(path, l, c);
