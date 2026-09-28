@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace egg {
+namespace vole {
 
 // ---------------------------------------------------------------- device ---
 
@@ -350,4 +350,4 @@ inline constexpr int kBulkSettleMs    = 360;
 inline constexpr int kTimeoutMinMinutes = 1;
 inline constexpr int kTimeoutMaxMinutes = 120;
 
-}  // namespace egg
+}  // namespace vole

@@ -1,7 +1,7 @@
 # Endgame Gear firmware update protocol
 
 How the vendor's firmware updaters flash an OP1w 4k, and everything a
-reimplementation needs. `src/fw/` (`egg-fw`) is that reimplementation; it has
+reimplementation needs. `src/fw/` (`vole-fw`) is that reimplementation; it has
 performed complete updates of both generations.
 
 Subjects:
@@ -89,7 +89,7 @@ ff 15 <IAT slot>       CALL [FindResourceW]
 and takes the size from the resource directory, never from a constant. It fails
 loudly unless the scan pins exactly one ID, so a recompile with different
 argument marshalling would refuse rather than guess. `src/fw/pe.cpp` is the C++
-port `egg-fw` uses; both agree on both updaters.
+port `vole-fw` uses; both agree on both updaters.
 
 All seven images across the two updaters are 209,920 bytes and **mutually
 distinct** (sha256), so size never discriminates and none is a duplicate. They
@@ -187,7 +187,7 @@ as `3367:1971`.
 
 A refusal and a success are therefore indistinguishable from the request on
 either OS. **Only "did the bootloader appear?" can tell them apart**, so that is
-the only thing a reimplementation should branch on. `egg-fw` shipped with this
+the only thing a reimplementation should branch on. `vole-fw` shipped with this
 wrong — it trusted the Windows behaviour and reported "the mouse refused the
 enter-bootloader command; nothing has been written and it is still running its
 firmware", three false claims about a mouse already sitting in DFU.
@@ -246,7 +246,7 @@ in fact carries: **[CAP]**
 All 205 replies echoed both the index and the checksum correctly. **A
 reimplementation can therefore verify each block landed where it was aimed and
 that the device summed the same payload** — a stronger check than the vendor's.
-`egg-fw` makes it inside the retry loop, so a transient costs a resend rather
+`vole-fw` makes it inside the retry loop, so a transient costs a resend rather
 than an abort. Byte 0 is `0x50` on every bootloader reply; the one
 config-protocol reply in the trace (`A1 13`) instead echoes `0xA1`.
 
@@ -264,7 +264,7 @@ a0 03 00 00 ... [16]=cd  [17..20]= b4 fe ef 00
 ```
 
 So **the device accepted an update with garbage in that field**: it is neither a
-length nor a checksum, and a reimplementation may put anything there. `egg-fw`
+length nor a checksum, and a reimplementation may put anything there. `vole-fw`
 sends zero.
 
 ### Timing
@@ -278,7 +278,7 @@ That capture ran in a VM, so part of the overhead is passthrough rather than the
 mouse. The conclusion is one-directional and safe either way: **the vendor's
 coded sleeps are not minimums.** A budget with no margin turns a *successful*
 flash into a reported failure, which invites the user to run another
-erase-and-write cycle. `egg-fw` therefore waits far longer than the vendor at
+erase-and-write cycle. `vole-fw` therefore waits far longer than the vendor at
 every step — 30 s for DFU to appear, 45 s for re-enumeration — because waiting
 costs nothing and a false failure does not.
 
@@ -324,7 +324,7 @@ being wrong in the other direction is telling a user a completed flash failed.
 Total time in the bootloader, echo through `complete`, was 29.3 s for 205 blocks.
 
 An earlier claim that the vendor's 3 s was too short had to be withdrawn as a VM
-artefact (§7), and the 30 s `egg-fw` waits was justified on the open-retry
+artefact (§7), and the 30 s `vole-fw` waits was justified on the open-retry
 argument above rather than on any number. The numbers now agree with it.
 
 ## 4. The three USB identities
@@ -410,7 +410,7 @@ excluded outright, and accept on a *functional* test. In DFU the only sound
 functional test is the echo test (§3 step c) — a `SET` followed by a `GET`, which
 is the pattern the device implements and the vendor uses.
 
-Both halves of this were predicted by an adversarial review of `egg-fw` before
+Both halves of this were predicted by an adversarial review of `vole-fw` before
 the descriptor was read, and the descriptor confirms the filter would have fired
 on the first real Linux run: the tool would have put a mouse into DFU and then
 been unable to reopen it.
@@ -425,7 +425,7 @@ because devices do end up stranded in DFU and must be recoverable by re-running
 the tool. The abort-and-do-nothing behaviour on block failure is only sane under
 the same assumption. **[BIN]**
 
-**That branch works:** both of `egg-fw`'s complete flashes ran through it, and
+**That branch works:** both of `vole-fw`'s complete flashes ran through it, and
 both mice came back (§7). **[DEV]** Note what that does and does not show — in
 both cases the mouse had been put into DFU *deliberately*, by a clean `A0 3A`,
 and was holding an intact application image. Flashing a mouse stranded by a
@@ -456,7 +456,7 @@ not exist on this path. **[BIN]**
   partial image will not run, recovery depends on the bootloader staying in DFU
   by itself. That is the standard pattern, and the recovery branch strongly
   implies it, but no partial write has been tested. Every "you can re-run this"
-  message in `egg-fw` is hedged for exactly this reason.
+  message in `vole-fw` is hedged for exactly this reason.
 - **Whether the device validates the decrypted image before jumping to it.**
   Nothing host-side answers this, and it is the difference between "retry" and
   "brick". After `A0 09` the host waits ~5 s for the application PID and
@@ -488,8 +488,8 @@ every config tool (90,112 bytes, a complete 32-bit PE, byte-identical across all
 five tools, sha256 `db06d7af…`). Bricking the dongle bricks all wireless use of
 the mouse.
 
-**`egg::Device`'s node-selection logic must not be reused for flashing without a
-hard VID/PID gate.** `src/fw/` is deliberately not linked against `egg` for this
+**`vole::Device`'s node-selection logic must not be reused for flashing without a
+hard VID/PID gate.** `src/fw/` is deliberately not linked against `vole` for this
 reason, and gates on VID *and* PID before usage is looked at at all.
 
 The rest, in rough order of how badly they end:
@@ -532,7 +532,7 @@ sha256 on wire  ad612be22f77907162429e1053a6fad53c91bd59a7f0916c9715970e56aa2b27
 sha256 resource ad612be22f77907162429e1053a6fad53c91bd59a7f0916c9715970e56aa2b27
 ```
 
-**`egg-fw` has performed complete updates of both generations** — an OP1w 4k v1
+**`vole-fw` has performed complete updates of both generations** — an OP1w 4k v1
 1.08 → 1.10, and an OP1w 4k v2 reflashed 1.07 over 1.07 — each verified by
 reading `bcdDevice` back afterwards rather than assumed. Every step in §3 has now
 been executed by that code, including `A0 01`, which no capture contains.
@@ -544,11 +544,11 @@ green tick:
 - The first two runs entered through the **recovery** branch, with the mouse
   already in DFU. The **application-mode branch** — reboot and flash in one
   invocation — has since completed on bare metal too, on a v1: reboot, DFU,
-  echo, erase, 205/205, re-enumeration, factory reset, and `egg-cli info`
+  echo, erase, 205/205, re-enumeration, factory reset, and `vole-cli info`
   reporting 1.10 from the re-attached mouse. **[DEV]**
 
   Its first attempt failed, and instructively: the mouse rebooted correctly and
-  `egg-fw` misread the reboot request's own result as a refusal (§3). That is
+  `vole-fw` misread the reboot request's own result as a refusal (§3). That is
   fixed, and the successful run is with the fix.
 - That run reflashed 1.10 over 1.10, so it does not by itself prove new bytes
   landed — only that the *sequence* runs unaided. The byte-level proof is the
@@ -596,9 +596,9 @@ wrongly.
 
 **One [DEV] tag was withdrawn**, because the mistake behind it is easy to repeat.
 An earlier revision said "3 s is not long enough — the v2 took longer to
-re-enumerate". `egg-fw` did time out at 3 s on a v2 that had rebooted correctly,
+re-enumerate". `vole-fw` did time out at 3 s on a v2 that had rebooted correctly,
 but that run was inside a VM, and §6.5 is precisely why the guest never saw the
 device. **No re-enumeration time was measured at all** — the number described
-passthrough, not the mouse. The 30 s wait `egg-fw` uses rests on the argument in
+passthrough, not the mouse. The 30 s wait `vole-fw` uses rests on the argument in
 §3 instead. Measuring how long DFU really takes to appear needs bare metal, or a
 hypervisor forwarding the physical port.

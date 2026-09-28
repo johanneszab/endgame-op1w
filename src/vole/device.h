@@ -14,7 +14,7 @@
 struct hid_device_;
 using hid_device = hid_device_;
 
-namespace egg {
+namespace vole {
 
 struct DeviceInfo {
     std::string path;
@@ -203,4 +203,4 @@ LodEncoding effectiveLodEncoding(const ModelInfo& m, bool glassMode);
 // A byte that does not map is returned unchanged for the caller to preserve.
 uint8_t lodConvertForGlassMode(uint8_t index, bool glassNowOn);
 
-}  // namespace egg
+}  // namespace vole

@@ -236,7 +236,7 @@ bool Flasher::openPid(uint16_t pid, int timeoutMs)
     // tool blames the USB passthrough. Verified on hardware: of six nodes for
     // 3367:1972, GET_REPORT(0xA0) answers on exactly one. [DEV]
     //
-    // This is the ranking egg::Device already uses. It does NOT reintroduce
+    // This is the ranking vole::Device already uses. It does NOT reintroduce
     // the hazard of FIRMWARE.md §6, because the dongle is excluded by
     // product ID above, before usage is looked at at all.
     // hid_enumerate can see a freshly re-enumerated node before udev has
@@ -251,7 +251,7 @@ bool Flasher::openPid(uint16_t pid, int timeoutMs)
         setError(msg("cannot open the configuration interface of %04X:%04X. "
                      "Either the udev rule is missing — the bootloader is a "
                      "separate product ID and needs its own line, see "
-                     "udev/70-endgamegear.rules — or no node on this device "
+                     "udev/70-vole.rules — or no node on this device "
                      "carries the vendor collection", kVendorId, pid));
         return false;
     }
@@ -504,7 +504,7 @@ bool Flasher::echoTest(const uint8_t* firstBlock)
 // enter-bootloader command; nothing has been written and it is still running
 // its firmware" — three claims, all false, about a mouse that was already
 // sitting in DFU. dmesg showed it disconnect and come back as the bootloader
-// while egg-fw was still blocked in the ioctl that it then reported as a
+// while vole-fw was still blocked in the ioctl that it then reported as a
 // refusal.
 //
 // So this function reports nothing and decides nothing. waitFor() decides.
@@ -539,7 +539,7 @@ std::string Flasher::rebootAdvice() const
         s += ", but on Linux that is also what a mouse rebooting mid-transfer "
              "looks like, so it does not mean the command was refused.";
     }
-    s += msg("\n  Run `egg-fw info`: if it reports the bootloader (%04X:%04X), "
+    s += msg("\n  Run `vole-fw info`: if it reports the bootloader (%04X:%04X), "
              "run this again and it will flash from there. If this machine is a "
              "virtual machine, the bootloader is a separate USB device and has "
              "to be forwarded in its own right — look for it on the host.",
@@ -627,7 +627,7 @@ bool Flasher::enterDfu()
 
     if (!openPid(found->appPid)) return false;
     if (!reportRoutable()) {
-        setError("report 0xA0 does not reach the mouse on the interface egg-fw "
+        setError("report 0xA0 does not reach the mouse on the interface vole-fw "
                  "selected, so the reboot command would go nowhere. Nothing has "
                  "been written");
         return false;
@@ -659,7 +659,7 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
     if (found != opt_.target) {
         setError(msg("a %s is plugged in, but this firmware is for the %s. "
                      "The image is encrypted and identifies nothing by itself, "
-                     "so egg-fw will not flash it at a mouse it was not built "
+                     "so vole-fw will not flash it at a mouse it was not built "
                      "for", found->name, opt_.target->name));
         return false;
     }
@@ -676,7 +676,7 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
         // presented as a USB passthrough problem.
         if (!reportRoutable()) {
             setError("report 0xA0 does not reach the mouse on the interface "
-                     "egg-fw selected, so the reboot command would go nowhere. "
+                     "vole-fw selected, so the reboot command would go nowhere. "
                      "Nothing has been written");
             return false;
         }
@@ -729,7 +729,7 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
                      "  Treat the application region as ALREADY ERASED — that "
                      "is what the device does while holding this reply. The "
                      "mouse should be in its bootloader as %04X:%04X; check "
-                     "with `egg-fw info` and run this again, which writes from "
+                     "with `vole-fw info` and run this again, which writes from "
                      "the start. Do not unplug it on the assumption that "
                      "nothing happened.",
                      error_.c_str(), kVendorId, opt_.target->bldrPid));
@@ -740,7 +740,7 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
         if (!sendBlock(i, image.data() + i * kBlockBytes)) {
             setError(msg("block %zu of %zu failed: %s.\n"
                          "  The mouse should now be sitting in its bootloader as "
-                         "%04X:%04X — run `egg-fw info` to confirm. If it is, "
+                         "%04X:%04X — run `vole-fw info` to confirm. If it is, "
                          "running this again flashes from the start, which is "
                          "the vendor tool's own recovery path and is how this "
                          "project's test mouse was recovered. Whether the "
@@ -769,7 +769,7 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
         setError(msg("every block was written and acknowledged, but the mouse "
                      "has not re-appeared as %04X:%04X within %d seconds.\n"
                      "  This is the one state that cannot be told apart from "
-                     "the outside (FIRMWARE.md §5). Check `egg-fw info`: "
+                     "the outside (FIRMWARE.md §5). Check `vole-fw info`: "
                      "if it reports the bootloader, re-run this; if it reports "
                      "nothing, re-seat the cable first. Do NOT assume the "
                      "update failed — it may simply be slow to enumerate.",
@@ -810,7 +810,7 @@ bool Flasher::flash(const std::vector<uint8_t>& image)
             // plainly rather than leaving a stale error behind a success.
             say("NOTE: the firmware is written, but the closing factory reset "
                 "did not go through. The old configuration survives and the new "
-                "firmware may read it differently — `egg-cli` can reset it.");
+                "firmware may read it differently — `vole-cli` can reset it.");
         }
         close();
         error_.clear();
@@ -827,7 +827,7 @@ bool Flasher::failed(const std::string& s)
         error_ += msg("\n  Note: this run rebooted the mouse into its "
                       "bootloader, so it is now %04X:%04X and is not acting as "
                       "a mouse. No firmware bytes were written. Confirm with "
-                      "`egg-fw info` and run this again — that writes from the "
+                      "`vole-fw info` and run this again — that writes from the "
                       "start and is the vendor updater's own recovery path. "
                       "Whether the bootloader always survives is not proven "
                       "(FIRMWARE.md §5), so check rather than assume.",

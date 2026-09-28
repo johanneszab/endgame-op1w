@@ -9,7 +9,7 @@
 
 #include "protocol.h"
 
-namespace egg {
+namespace vole {
 
 // --------------------------------------------------------------- cmd 0x14 ---
 
@@ -178,4 +178,4 @@ DecodedConfig decodeBlob(const std::array<uint8_t, kBlobSize>& blob);
 // the table cannot silently revert them.
 void syncFilters(const PowerBlock& power, ButtonTable& buttons);
 
-}  // namespace egg
+}  // namespace vole

@@ -1,4 +1,4 @@
-// egg-cli — command-line configuration for the Endgame Gear wireless mice
+// vole-cli — command-line configuration for the Endgame Gear wireless mice
 // (OP1w 4k and XM2w 4k, both generations).
 //
 // Writes go out as whole blocks, so changing one setting means supplying every
@@ -15,10 +15,10 @@
 #include <thread>
 #include <vector>
 
-#include "egg/device.h"
-#include "egg/settings.h"
+#include "vole/device.h"
+#include "vole/settings.h"
 
-using namespace egg;
+using namespace vole;
 
 namespace {
 
@@ -325,7 +325,7 @@ void cmdBlob(Device& dev)
 void usage()
 {
     std::cout <<
-        "usage: egg-cli <command> [args]\n"
+        "usage: vole-cli <command> [args]\n"
         "\n"
         "  info                          device, firmware and battery\n"
         "  show                          current configuration\n"
@@ -409,7 +409,7 @@ int doSet(Device& dev, const std::vector<std::string>& args)
                 die(std::string("the ") + dev.model().name +
                     " ignores the active-stage field — switch stages with the "
                     "button underneath the mouse. Its own vendor tool has no "
-                    "control for this either. (egg show prints the stage the "
+                    "control for this either. (vole-cli show prints the stage the "
                     "mouse is on, and the LED colour that goes with it.)");
             }
             const int n = parseInt(args[2]);

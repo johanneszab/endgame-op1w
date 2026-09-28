@@ -15,7 +15,7 @@
 #include <cstring>
 #include <thread>
 
-namespace egg {
+namespace vole {
 namespace {
 
 void sleepMs(int ms)
@@ -158,7 +158,7 @@ bool Device::open()
     }
 
     setError("found the device but no interface answered a probe "
-             "(permissions? see udev/70-endgamegear.rules)");
+             "(permissions? see udev/70-vole.rules)");
     return false;
 }
 
@@ -641,4 +641,4 @@ std::vector<double> lodOptions(LodEncoding enc)
     return v;
 }
 
-}  // namespace egg
+}  // namespace vole

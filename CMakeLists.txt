@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(endgame-op1w VERSION 0.1.0 LANGUAGES CXX)
+project(vole VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,54 +27,54 @@ endif()
 
 # ---------------------------------------------------------------- library ---
 
-add_library(egg STATIC
-    src/egg/device.cpp
-    src/egg/settings.cpp
+add_library(vole STATIC
+    src/vole/device.cpp
+    src/vole/settings.cpp
 )
-target_include_directories(egg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(egg PUBLIC PkgConfig::HIDAPI)
+target_include_directories(vole PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(vole PUBLIC PkgConfig::HIDAPI)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set(EGG_WARNINGS -Wall -Wextra)
+    set(VOLE_WARNINGS -Wall -Wextra)
 else()
-    set(EGG_WARNINGS /W4)
+    set(VOLE_WARNINGS /W4)
 endif()
-target_compile_options(egg PRIVATE ${EGG_WARNINGS})
+target_compile_options(vole PRIVATE ${VOLE_WARNINGS})
 
 # -------------------------------------------------------------------- cli ---
 
-add_executable(egg-cli src/cli/main.cpp)
-target_link_libraries(egg-cli PRIVATE egg)
-target_compile_options(egg-cli PRIVATE ${EGG_WARNINGS})
+add_executable(vole-cli src/cli/main.cpp)
+target_link_libraries(vole-cli PRIVATE vole)
+target_compile_options(vole-cli PRIVATE ${VOLE_WARNINGS})
 
 # --------------------------------------------------------- firmware tool ---
 #
-# Its own binary, and deliberately not linked against egg: that library picks
+# Its own binary, and deliberately not linked against vole: that library picks
 # its hidraw node by usage page, which the dongle also matches. Nothing that
 # writes firmware should be one refactor away from addressing the dongle.
 # See re/firmware/FIRMWARE.md §6.
 
-add_executable(egg-fw src/fw/main.cpp src/fw/flasher.cpp src/fw/pe.cpp)
-target_include_directories(egg-fw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/fw)
-target_link_libraries(egg-fw PRIVATE PkgConfig::HIDAPI)
-target_compile_options(egg-fw PRIVATE ${EGG_WARNINGS})
-install(TARGETS egg-fw RUNTIME DESTINATION bin)
+add_executable(vole-fw src/fw/main.cpp src/fw/flasher.cpp src/fw/pe.cpp)
+target_include_directories(vole-fw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/fw)
+target_link_libraries(vole-fw PRIVATE PkgConfig::HIDAPI)
+target_compile_options(vole-fw PRIVATE ${VOLE_WARNINGS})
+install(TARGETS vole-fw RUNTIME DESTINATION bin)
 
 # -------------------------------------------------------------------- gui ---
 
 find_package(Qt6 6.2 COMPONENTS Widgets QUIET)
 if(Qt6_FOUND)
     set(CMAKE_AUTOMOC ON)
-    add_executable(egg-gui
+    add_executable(vole-gui
         src/gui/main.cpp
         src/gui/MainWindow.cpp
     )
-    target_link_libraries(egg-gui PRIVATE egg Qt6::Widgets)
-    target_compile_options(egg-gui PRIVATE ${EGG_WARNINGS})
-    install(TARGETS egg-gui RUNTIME DESTINATION bin)
+    target_link_libraries(vole-gui PRIVATE vole Qt6::Widgets)
+    target_compile_options(vole-gui PRIVATE ${VOLE_WARNINGS})
+    install(TARGETS vole-gui RUNTIME DESTINATION bin)
 else()
-    message(STATUS "Qt6 Widgets not found - building egg-cli only")
+    message(STATUS "Qt6 Widgets not found - building vole-cli only")
 endif()
 
-install(TARGETS egg-cli RUNTIME DESTINATION bin)
-install(FILES udev/70-endgamegear.rules
+install(TARGETS vole-cli RUNTIME DESTINATION bin)
+install(FILES udev/70-vole.rules
         DESTINATION lib/udev/rules.d)

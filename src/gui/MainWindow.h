@@ -3,8 +3,8 @@
 #include <QMainWindow>
 #include <array>
 
-#include "egg/device.h"
-#include "egg/settings.h"
+#include "vole/device.h"
+#include "vole/settings.h"
 
 class QCheckBox;
 class QComboBox;
@@ -55,8 +55,8 @@ private:
 
 
 
-    egg::Device        device_;
-    egg::DecodedConfig config_;
+    vole::Device        device_;
+    vole::DecodedConfig config_;
     bool               populating_ = false;
     // The glass bit the last successful read/write left on the device. Not
     // config_.power.glassMode, which tracks the widgets.
@@ -77,10 +77,10 @@ private:
     QCheckBox* rippleBox_     = nullptr;
     QCheckBox* ledLiftOffBox_ = nullptr;
     QCheckBox* splitXYBox_    = nullptr;
-    std::array<QSpinBox*, egg::kCpiStageCount>    cpiX_{};
-    std::array<QSpinBox*, egg::kCpiStageCount>    cpiY_{};
-    std::array<QPushButton*, egg::kCpiStageCount> stageButton_{};
-    std::array<QLabel*, egg::kCpiStageCount>      stageSwatch_{};
+    std::array<QSpinBox*, vole::kCpiStageCount>    cpiX_{};
+    std::array<QSpinBox*, vole::kCpiStageCount>    cpiY_{};
+    std::array<QPushButton*, vole::kCpiStageCount> stageButton_{};
+    std::array<QLabel*, vole::kCpiStageCount>      stageSwatch_{};
     QLabel* cpiStageHint_ = nullptr;
 
     // advanced
@@ -96,11 +96,11 @@ private:
     QSpinBox*  powerSavingMin_ = nullptr;
     QCheckBox* deepSleepBox_   = nullptr;
     QSpinBox*  deepSleepMin_   = nullptr;
-    std::array<QComboBox*, egg::kFilterButtonCount> buttonFilter_{};
+    std::array<QComboBox*, vole::kFilterButtonCount> buttonFilter_{};
 
     // buttons
     QCheckBox* leftHandedBox_ = nullptr;
-    std::array<QComboBox*, egg::kButtonCount> buttonAction_{};
+    std::array<QComboBox*, vole::kButtonCount> buttonAction_{};
 
     QPushButton* applySensorBtn_  = nullptr;
     QPushButton* applyPowerBtn_   = nullptr;

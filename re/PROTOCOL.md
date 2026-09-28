@@ -10,7 +10,7 @@ configuration tool. Every claim is tagged with how it was established:
 - **[HID]** — read from the device's own HID report descriptor
 - **[CAP]** — confirmed by USB capture (differential analysis, 44 captures)
 - **[DEV]** — confirmed against live hardware on Linux: a setting is changed
-  with `egg-cli` and the 1024-byte blob diffed before and after
+  with `vole-cli` and the 1024-byte blob diffed before and after
 - **[UI]** — read off the vendor tool's own interface
 - **[?]** — inference, not yet confirmed
 
@@ -516,7 +516,7 @@ default values of stages 1–4. It is not a value→colour rule.
 
 Since the mapping is a literal in every binary and identical across all four
 models, a port should hardcode it too rather than trying to derive it from the
-blob. `kStageColours` in `src/egg/protocol.h` does.
+blob. `kStageColours` in `src/vole/protocol.h` does.
 
 
 ### Read responses
@@ -623,7 +623,7 @@ would need to act on. Under the layout above it decodes as code `0x31`,
 sub-value `0x14`, short `0x0010`; `0x14` being exactly the command that had
 just been written is suggestive of a write-acknowledgement, but one sample
 cannot distinguish that from a coincidence. The decisive test is cheap: run
-`egg-cli listen` on a v1 and apply a `0x15` change, then a `0x16` change.
+`vole-cli listen` on a v1 and apply a `0x15` change, then a `0x16` change.
 
 **That test has now been run, and it rules the acknowledgement out.** One cmd
 `0x14` write (`set cpi`), one `0x15` (`set slamclick`) and one `0x16`
@@ -713,7 +713,7 @@ Consequences for a port:
    > read queue, so a `hid_read` on the config collection never sees a
    > notification. `MI_01` of the dongle presents as four HID children —
    > `Col02` (config, usage `0xFF01`/`0x02`) plus `Col03`, `Col04`, `Col05`.
-   > **`egg-cli listen` therefore returns nothing on a Windows build**, not
+   > **`vole-cli listen` therefore returns nothing on a Windows build**, not
    > even a battery event after a `0xB4`, and that is a property of the
    > platform rather than a fault in the device or the tool. Reproducing it
    > there would need a second handle opened on the `0xFF02`/`0x0001`
@@ -807,7 +807,7 @@ No kernel driver needs detaching — `hidraw` coexists with `usbhid`, so the mou
 keeps working while the tool talks to it.
 
 ```
-# /etc/udev/rules.d/70-endgamegear.rules
+# /etc/udev/rules.d/70-vole.rules
 KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1970", TAG+="uaccess"
 ```
 
@@ -1022,7 +1022,7 @@ The strongest end-to-end check available without a bus analyser: write a
 setting from this implementation on Linux, then read it in the vendor's own
 Windows tool.
 
-`egg-cli set cpi 2 1480 1480` — issued against a stage the vendor tool had
+`vole-cli set cpi 2 1480 1480` — issued against a stage the vendor tool had
 previously set to 410/1480 with *X/Y Settings* ticked — produced, in the vendor
 tool: **CPI 2 = 1480 / 1480, X/Y Settings unticked**, everything else unchanged.
 The mouse also stopped tracking at different speeds per axis. **[DEV]**
@@ -1195,7 +1195,7 @@ back.
 ## 13. Cabled operation
 
 A mouse connected by USB-C instead of through the dongle speaks the same
-configuration protocol, and this tool now supports it: `egg-cli info`, `show`
+configuration protocol, and this tool now supports it: `vole-cli info`, `show`
 and `blob` all work against a cabled OP1w 4k v1. **[DEV]**
 
 ### Two commands are refused, with a status code we had not seen

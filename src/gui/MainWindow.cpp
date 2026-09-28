@@ -20,7 +20,7 @@
 #include <algorithm>
 #include <iterator>   // std::size
 
-using namespace egg;
+using namespace vole;
 
 namespace {
 
@@ -140,7 +140,7 @@ MainWindow::MainWindow()
         report(QString::fromStdString(device_.lastError()), true);
         QMessageBox::critical(this, tr("No device"),
             tr("%1\n\nIf the dongle is plugged in, this is usually a permissions "
-               "problem — install udev/70-endgamegear.rules and replug.")
+               "problem — install udev/70-vole.rules and replug.")
                 .arg(QString::fromStdString(device_.lastError())));
         central->setEnabled(false);
         return;
@@ -903,8 +903,10 @@ void MainWindow::repopulateForModel()
     const ModelInfo& m = device_.model();
     const bool known = device_.modelIdentified();
 
-    // Qt renders this as "<title> — Endgame Gear" (the application display
-    // name), so this half carries only the model.
+    // Qt renders this as "<title> — vole" (the application display name), so
+    // this half carries only the model. The model names are the vendor's, used
+    // to say which hardware is in front of you; see main.cpp on why the other
+    // half is not.
     setWindowTitle(known ? QString::fromUtf8(m.name)
                          : tr("Mouse not identified"));
 

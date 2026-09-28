@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace egg {
+namespace vole {
 namespace {
 
 void put16(uint8_t* p, uint16_t v)
@@ -387,4 +387,4 @@ void syncFilters(const PowerBlock& power, ButtonTable& buttons)
     }
 }
 
-}  // namespace egg
+}  // namespace vole

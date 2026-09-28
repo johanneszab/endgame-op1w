@@ -2,7 +2,7 @@
 # collection via hidraw.
 #
 # Install:
-#   sudo cp 70-endgamegear.rules /etc/udev/rules.d/
+#   sudo cp 70-vole.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload-rules && sudo udevadm trigger
 # then replug the dongle.
 
@@ -11,7 +11,7 @@
 KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1970", TAG+="uaccess"
 
 # Mouse connected by cable. Each model has its own product ID, so every one it
-# supports needs a line here — see kModels in src/egg/protocol.h.
+# supports needs a line here — see kModels in src/vole/protocol.h.
 # OP1w 4k
 KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1972", TAG+="uaccess"
 # OP1w 4k v2
@@ -21,7 +21,7 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1968", TAG+="uacc
 # XM2w 4k v2
 KERNEL=="hidraw*", ATTRS{idVendor}=="3367", ATTRS{idProduct}=="1982", TAG+="uaccess"
 
-# Firmware bootloader ("EGG Bootloader"), needed by egg-fw. A mouse in this mode
+# Firmware bootloader ("EGG Bootloader"), needed by vole-fw. A mouse in this mode
 # is a DIFFERENT USB device from the mouse itself — product ID minus one — and
 # without these lines a firmware update stops dead the moment it re-enumerates,
 # with the device stranded in the bootloader until something can reach it.

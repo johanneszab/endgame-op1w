@@ -98,7 +98,7 @@ private:
     // depending on whether the request was acknowledged, so record that.
     bool        enterAcked_ = false;
     std::string enterAckNote_;
-    // The reason egg-fw could not confirm the reboot, ready to append to a
+    // The reason vole-fw could not confirm the reboot, ready to append to a
     // message that has already said the bootloader did not appear.
     std::string rebootAdvice() const;
     bool sendStart(size_t blocks);

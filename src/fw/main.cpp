@@ -1,6 +1,6 @@
-// egg-fw — firmware updater for Endgame Gear wireless mice, over USB-C.
+// vole-fw — firmware updater for Endgame Gear wireless mice, over USB-C.
 //
-// Separate from egg-cli on purpose. This writes firmware; it has no business
+// Separate from vole-cli on purpose. This writes firmware; it has no business
 // sharing a binary, a device-selection strategy or a set of command verbs with
 // the tool that changes CPI. See re/firmware/FIRMWARE.md.
 //
@@ -33,15 +33,15 @@ namespace {
 void usage()
 {
     std::cout <<
-        "egg-fw — firmware updater for Endgame Gear wireless mice\n"
+        "vole-fw — firmware updater for Endgame Gear wireless mice\n"
         "\n"
         "usage:\n"
-        "  egg-fw info                       what is attached, and in which mode\n"
-        "  egg-fw verify  <updater.exe>      inspect it; touches no hardware\n"
-        "  egg-fw flash   <updater.exe>      write it  (add --yes to do it for real)\n"
-        "  egg-fw extract <updater.exe> -o <file.bin>\n"
+        "  vole-fw info                       what is attached, and in which mode\n"
+        "  vole-fw verify  <updater.exe>      inspect it; touches no hardware\n"
+        "  vole-fw flash   <updater.exe>      write it  (add --yes to do it for real)\n"
+        "  vole-fw extract <updater.exe> -o <file.bin>\n"
         "                                    save the firmware image by itself\n"
-        "  egg-fw bootloader                 DEVELOPER ONLY, and one-way: reboots\n"
+        "  vole-fw bootloader                 DEVELOPER ONLY, and one-way: reboots\n"
         "                                    the mouse into its bootloader and\n"
         "                                    leaves it there. The only known way\n"
         "                                    back is to flash it, so have the\n"
@@ -49,18 +49,18 @@ void usage()
         "\n"
         "what to do:\n"
         "  1. Download the firmware updater for your mouse from endgamegear.com.\n"
-        "     Give egg-fw that .exe as it is — do not try to unpack it.\n"
+        "     Give vole-fw that .exe as it is — do not try to unpack it.\n"
         "  2. Switch the mouse off, unplug the USB-C cable from the dongle and\n"
         "     plug it into the MOUSE, then switch the mouse on. The firmware is\n"
         "     only updatable over the cable; this tool will not touch the dongle.\n"
-        "  3. egg-fw flash Endgame_Gear_..._Firmware_Updater_v1.10.exe\n"
+        "  3. vole-fw flash Endgame_Gear_..._Firmware_Updater_v1.10.exe\n"
         "     That is a rehearsal and writes nothing. If it is happy, run it\n"
         "     again with --yes.\n"
         "\n"
         "options:\n"
         "  --yes            actually write. Without it nothing reaches the mouse\n"
         "  --model <name>   assert which mouse this is for. Normally unnecessary:\n"
-        "                   the updater names its own model and egg-fw checks it\n"
+        "                   the updater names its own model and vole-fw checks it\n"
         "                   against the mouse that is plugged in\n"
         "  --keep-config    skip the closing factory reset. The vendor's updater\n"
         "                   always resets; skipping leaves settings the new\n"
@@ -75,7 +75,7 @@ void usage()
     std::cout <<
         "\n"
         "If an update is interrupted the mouse stays in its bootloader, which is\n"
-        "recoverable, not broken: run egg-fw again and it flashes from the start.\n";
+        "recoverable, not broken: run vole-fw again and it flashes from the start.\n";
 }
 
 int die(const std::string& msg)
@@ -160,7 +160,7 @@ int cmdInfo()
     const Target* t = Flasher::detect(&inBootloader);
     if (!t) {
         std::cout << "No mouse found.\n\n"
-                     "egg-fw talks to a cabled mouse or its bootloader, never to "
+                     "vole-fw talks to a cabled mouse or its bootloader, never to "
                      "the dongle.\nSwitch the mouse off, move the USB-C cable "
                      "from the dongle to the mouse,\nand switch it back on.\n";
         return 1;
@@ -174,7 +174,7 @@ int cmdInfo()
                 t->appPid, t->bldrPid);
     if (inBootloader) {
         std::cout << "\nThat is where an interrupted update leaves it. Running "
-                     "egg-fw flash writes\nfrom the start, which is the vendor "
+                     "vole-fw flash writes\nfrom the start, which is the vendor "
                      "updater's own recovery path and is how\nthis project's "
                      "test mouse was recovered. Whether the bootloader always\n"
                      "survives a partial image is not proven, so check rather "
@@ -243,7 +243,7 @@ int cmdBootloader(const std::vector<std::string>& args)
     } else {
         std::cout <<
             "This reboots the mouse into its bootloader and leaves it there.\n"
-            "The only established way back out is to flash it — with egg-fw, or\n"
+            "The only established way back out is to flash it — with vole-fw, or\n"
             "with the vendor's updater, which has a recovery branch for exactly\n"
             "this state. Whether a power cycle leaves the bootloader has never\n"
             "been tested.\n\n";
@@ -267,7 +267,7 @@ int cmdBootloader(const std::vector<std::string>& args)
             "    p=$(cat $h/device/../../idProduct 2>/dev/null)\n"
             "    [ \"$p\" = \"%04x\" ] && echo $h && xxd $h/device/report_descriptor\n"
             "  done\n"
-            "\nTo get it back, flash it: egg-fw flash <updater.exe> --yes\n",
+            "\nTo get it back, flash it: vole-fw flash <updater.exe> --yes\n",
             t ? t->bldrPid : 0x1971);
     }
     return 0;
@@ -296,7 +296,7 @@ int cmdFlash(std::vector<std::string> args)
             return die("unexpected argument " + a);
         }
     }
-    if (path.empty()) return die("no updater .exe given — see egg-fw with no arguments");
+    if (path.empty()) return die("no updater .exe given — see vole-fw with no arguments");
 
     Loaded l; std::string err;
     if (!load(path, &l, &err)) return die(err);
@@ -316,11 +316,11 @@ int cmdFlash(std::vector<std::string> args)
         return die("flash needs the vendor's updater .exe, not a raw image. A "
                    "raw image is encrypted and identifies neither its model nor "
                    "its version, so nothing can check it is the right one for "
-                   "the mouse in front of you. Use `egg-fw extract` if you want "
+                   "the mouse in front of you. Use `vole-fw extract` if you want "
                    "to inspect the image itself");
     }
     if (!l.declared) {
-        return die("this updater does not name any mouse egg-fw supports. "
+        return die("this updater does not name any mouse vole-fw supports. "
                    "Refusing rather than guessing — an updater for a model that "
                    "is not in the table may use a different bootloader identity "
                    "or a different sequence entirely");
@@ -362,7 +362,7 @@ int cmdFlash(std::vector<std::string> args)
         std::cout << "\nThe update ends with a factory reset, exactly as the "
                      "vendor's updater does:\nthe mouse loses its settings. To "
                      "keep a copy, plug the dongle back in first\nand run "
-                     "`egg-cli blob`.\n";
+                     "`vole-cli blob`.\n";
     }
     std::cout << "\n";
 
@@ -383,7 +383,7 @@ int cmdFlash(std::vector<std::string> args)
     std::cout << (opt.dryRun
                      ? "Rehearsal finished. Nothing was written.\n"
                      : "Firmware written. Unplug the cable, put the dongle back "
-                       "in, and check the\nversion with `egg-cli info`.\n");
+                       "in, and check the\nversion with `vole-cli info`.\n");
     return 0;
 }
 

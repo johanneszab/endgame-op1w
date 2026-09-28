@@ -1,8 +1,13 @@
-# endgame-op1w
+# vole
 
 A Linux configuration tool for **Endgame Gear wireless mice** — an independent
 implementation of the protocol used by the vendor's Windows-only tool,
-reverse-engineered for interoperability.
+reverse-engineered for interoperability. It configures the mouse, and updates its
+firmware, without Windows.
+
+> **This is not an official application developed by Endgame Gear.**
+> "Endgame Gear", "Endgame", "OP1w" and "XM2w" are the manufacturer's names, used
+> here only to identify the hardware this tool interoperates with.
 
 Protocol documentation: [`re/PROTOCOL.md`](re/PROTOCOL.md).
 
@@ -53,7 +58,7 @@ Everything the vendor tool exposes, firmware updates included:
   CPI value, or nothing; left-handed mode
 - **Device** — battery and signal level, mouse and dongle firmware, live
   sleep/wake state, re-pair, factory reset
-- **Firmware updates** — `egg-fw` flashes the vendor's own updater executable,
+- **Firmware updates** — `vole-fw` flashes the vendor's own updater executable,
   so no Windows is needed. See below.
 
 Works over the dongle or with the mouse plugged in by USB-C. A cabled mouse
@@ -77,7 +82,7 @@ cmake -B build -S .
 cmake --build build -j
 ```
 
-The GUI is optional — if Qt 6 isn't found, only `egg-cli` is built.
+The GUI is optional — if Qt 6 isn't found, only `vole-cli` is built.
 
 ## Screenshot:
 ![GUI](images/gui.png?raw=true "GUI")
@@ -87,7 +92,7 @@ The GUI is optional — if Qt 6 isn't found, only `egg-cli` is built.
 `hidraw` nodes are root-only by default. Install the udev rule if you want to use the application as non-root user:
 
 ```bash
-sudo cp udev/70-endgamegear.rules /etc/udev/rules.d/
+sudo cp udev/70-vole.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
@@ -97,36 +102,36 @@ keeps working while the tool talks to it.
 ## Usage
 
 ```bash
-./build/egg-gui                        # graphical
-./build/egg-cli info                   # firmware, battery
-./build/egg-cli show                   # current configuration
-./build/egg-cli set cpi 1 1600
-./build/egg-cli set polling 4000
-./build/egg-cli set lod 1.5
-./build/egg-cli set click-filter left gx-speed
-./build/egg-cli map back consumer 0xEA # back button -> volume down
-./build/egg-cli map back cpi 600 400   # back button -> fixed 600/400 CPI
-./build/egg-cli listen                 # watch battery / sleep events live
-./build/egg-cli --help
+./build/vole-gui                        # graphical
+./build/vole-cli info                   # firmware, battery
+./build/vole-cli show                   # current configuration
+./build/vole-cli set cpi 1 1600
+./build/vole-cli set polling 4000
+./build/vole-cli set lod 1.5
+./build/vole-cli set click-filter left gx-speed
+./build/vole-cli map back consumer 0xEA # back button -> volume down
+./build/vole-cli map back cpi 600 400   # back button -> fixed 600/400 CPI
+./build/vole-cli listen                 # watch battery / sleep events live
+./build/vole-cli --help
 ```
 
 ## Firmware updates
 
-`egg-fw` takes the vendor's updater executable exactly as downloaded from
+`vole-fw` takes the vendor's updater executable exactly as downloaded from
 endgamegear.com. There is no separate extraction step, and there should not be:
 one updater ships five candidate firmware images of identical size and flashes
-the third, so choosing by hand is a coin flip. `egg-fw` recovers the right one
+the third, so choosing by hand is a coin flip. `vole-fw` recovers the right one
 from the instruction that passes it to `FindResourceW`, and refuses to run if
 it cannot pin exactly one.
 
 **The mouse must be connected by its USB-C cable, not through the dongle** —
-the firmware path is cable-only, and `egg-fw` will not touch the dongle.
+the firmware path is cable-only, and `vole-fw` will not touch the dongle.
 
 ```bash
-./build/egg-fw info                                    # what is attached
-./build/egg-fw verify  Endgame_..._Updater_v1.10.exe   # inspect, touch nothing
-./build/egg-fw flash   Endgame_..._Updater_v1.10.exe   # rehearsal
-./build/egg-fw flash   Endgame_..._Updater_v1.10.exe --yes
+./build/vole-fw info                                    # what is attached
+./build/vole-fw verify  Endgame_..._Updater_v1.10.exe   # inspect, touch nothing
+./build/vole-fw flash   Endgame_..._Updater_v1.10.exe   # rehearsal
+./build/vole-fw flash   Endgame_..._Updater_v1.10.exe --yes
 ```
 
 Without `--yes` nothing is written: it opens the mouse, proves the firmware
@@ -135,12 +140,12 @@ is checked against the mouse in front of you, so a v2 firmware cannot be
 flashed into a v1.
 
 **It ends with a factory reset**, exactly as the vendor's updater does, so save
-your settings first with `egg-cli blob` while the dongle is still connected.
+your settings first with `vole-cli blob` while the dongle is still connected.
 
 If an update is interrupted the mouse stays in its bootloader and enumerates as
-a separate USB device, `EGG Bootloader`. Run `egg-fw info` to confirm, then
+a separate USB device, `EGG Bootloader`. Run `vole-fw info` to confirm, then
 flash again — it writes from the start, which is the vendor tool's own recovery
-path. Note that `70-endgamegear.rules` must be installed for this to work: the
+path. Note that `70-vole.rules` must be installed for this to work: the
 bootloader is a different product ID and needs its own rule.
 
 > **What has actually been tested.** Both the OP1w 4k (v1) and the OP1w 4k v2
@@ -156,7 +161,7 @@ bootloader is a different product ID and needs its own rule.
 > repair, but read the error — it will tell you what state the mouse is in.
 >
 > Neither XM2w model is supported: nothing establishes their bootloader
-> identities, and `egg-fw` refuses rather than guessing at a device that is
+> identities, and `vole-fw` refuses rather than guessing at a device that is
 > about to be overwritten.
 
 ## Design notes
@@ -179,7 +184,7 @@ is what the vendor tool does, and it is reproduced exactly — see
 `kPowerDeclaredLength`.
 
 **Serialised access.** The device does not tolerate interleaved or pipelined
-commands, and answers `status = 0x03` while busy. `egg::Device` guards every
+commands, and answers `status = 0x03` while busy. `vole::Device` guards every
 exchange with a mutex and implements the vendor tool's retry and back-off rules.
 Don't bypass it.
 
@@ -188,7 +193,7 @@ Don't bypass it.
 The GUI subscribes to that channel: a 1-second timer drains the local hidraw
 queue, which costs nothing, and the device itself is only queried at startup,
 on an explicit Reload, or when a link-up event says there is fresh state worth
-reading. `egg-cli listen` prints the same stream.
+reading. `vole-cli listen` prints the same stream.
 
 **Two links, two states.** The dongle stays reachable over USB while the mouse
 is asleep, so `0x0D` (dongle firmware) keeps answering while `0x0E` (mouse
@@ -204,7 +209,7 @@ tool's own UI, and the writable ones round-trip through the device.
 **Builds and runs against live hardware** — OP1w 4k v2 (mouse firmware 1.07)
 and OP1w 4k v1 (firmware 1.08), both on dongle firmware 1.01.
 
-The two XM2w models are in `kModels` (`src/egg/protocol.h`) with PIDs and
+The two XM2w models are in `kModels` (`src/vole/protocol.h`) with PIDs and
 capability flags taken from their vendor tools, which are the same builds as
 the OP1w ones with different constants. **Neither has been tested** — if you
 own one, reports are welcome.
@@ -216,4 +221,4 @@ than guessing. See [`re/PROTOCOL.md`](re/PROTOCOL.md) §12.
 
 Not implemented: the `0x71`/`0x72` pairing commands, which exist in the vendor
 binary but are unreachable from its UI. Firmware update is implemented — see
-`egg-fw` above and [`re/firmware/FIRMWARE.md`](re/firmware/FIRMWARE.md).
+`vole-fw` above and [`re/firmware/FIRMWARE.md`](re/firmware/FIRMWARE.md).

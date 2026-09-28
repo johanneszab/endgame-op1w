@@ -1,6 +1,6 @@
 // Endgame Gear firmware bootloader protocol.
 //
-// Deliberately NOT part of src/egg/. The configuration library selects its
+// Deliberately NOT part of src/vole/. The configuration library selects its
 // hidraw node by usage page, which is right for talking to a mouse and wrong
 // for flashing one: the dongle exposes the same 0xFF01/0x02 collection and the
 // same report IDs, so usage-based selection can attach to 3367:1970 and stream
