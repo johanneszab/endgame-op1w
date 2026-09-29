@@ -145,7 +145,7 @@ Not guessable from a capture; worth copying verbatim.
 | `0x70` | `A1 70 00 00` | write | — | **re-pair mouse to dongle** |
 | `0x71` | `A1 71 00 00` | write | — | "Pair Default" — present in the binary, not reachable from the UI |
 | `0x72` | `A1 72 00 00` | read | 16 B | "Get pair data" — likewise unreachable |
-| `0xB4` | `A1 B4 00 00` | read | 3 B | **battery %, signal level, target** |
+| `0xB4` | `A1 B4 00 00` | read | 3 B | **battery %, an undecoded byte, target** |
 
 `0x13` is **factory reset**, not a commit — confirmed by capturing the Factory
 Reset button. **[CAP]** See §5 on persistence.
@@ -523,7 +523,7 @@ blob. `kStageColours` in `src/vole/protocol.h` does.
 
 | cmd | payload | notes |
 |---|---|---|
-| `0xB4` | `+0` battery %, `+1` signal level, `+2` target (`0x0F`) | `0x41` = 65 %, matching the UI exactly. Same three bytes a battery notification carries — see §4a |
+| `0xB4` | `+0` battery %, `+1` undecoded **[?]**, `+2` target (`0x0F`) | `0x41` = 65 %, matching the UI exactly. Same three bytes a battery notification carries — see §4a |
 | `0x0D` | `+0..+1` = dongle firmware | `01 01` = v1.01 |
 | `0x0E` | `+0..+1` VID, `+2..+3` **mouse PID**, `+4..+5` PID−1 **[?]**, `+6..+7` firmware | v1 `67 33 72 19 71 19 01 08`, v2 `67 33 84 19 83 19 01 07` **[DEV]** |
 
@@ -572,7 +572,7 @@ laid out like that command's response** — a notification is an unsolicited
 command reply.
 
 ```
-03 B4 <battery> <signal> 0F 00 00 00     battery / signal update
+03 B4 <battery> <?> 0F 00 00 00          battery update
 03 B1 01 00 00 00 00 00                  radio link up   (mouse awake)
 03 B1 F0 0A 00 00 00 00                  radio link down (deep sleep)
 ```
@@ -679,12 +679,29 @@ absence of evidence with evidence of absence.
 |---|---|---|
 | 1 | `B4` — same code as the battery command | `B1` |
 | 2 | battery percentage — `0x41` = 65 %, matching the UI | `0x01` up / `0xF0` down |
-| 3 | signal level **[?]** — drifts between `0x29` and `0x3A` while in use | `0x00` up / `0x0A` down |
+| 3 | **undecoded [?]** — see below | `0x00` up / `0x0A` down |
 | 4 | `0x0F` — the mouse target selector, as in a request header | — |
 
 Bytes 2–4 of a battery event are **byte-for-byte the payload of a `0xB4`
 response**, which retrospectively decodes that response too: `+0` battery, `+1`
-signal, `+2` target.
+undecoded, `+2` target.
+
+> **Byte 3 is not a signal level.** This document called it one for a long time,
+> on nothing better than its position next to the battery percentage and the
+> fact that it moves. Two observations retire that reading:
+>
+> - **No vendor tool ever reads it.** `FUN_004050c0` — the v2 tool's cmd `0xB4`
+>   helper — sends the request, sleeps, reads the reply, checks the status byte
+>   and then extracts **exactly one byte**, the percentage at `+16`. No vendor
+>   UI has a signal field at all. **[BIN]**
+> - **It reads the same with and without a radio link.** On one v2 minutes
+>   apart: `236` on the USB cable, `232` over the dongle. A link-quality figure
+>   cannot be meaningful on a cable, where there is no link. **[DEV]**
+>
+> It also does not track the battery: the same pair of readings had the
+> percentage byte at 55 and 95. What it *is* remains open. The observed range
+> has been 41–58 and 232–236 at different times, which is a wide spread for one
+> field and may mean it is not one field.
 
 Timing confirms the link event is the deep-sleep timer firing. With deep sleep
 set to 3 minutes, link-down arrived 181.8 s after the last mouse input in three
@@ -697,7 +714,7 @@ fresh value once the mouse replies.
 
 Consequences for a port:
 
-1. **Nothing needs polling.** Battery, signal and link state all arrive on their
+1. **Nothing needs polling.** Battery and link state both arrive on their
    own. `0xB4` is only needed for an initial value at startup.
 2. **Distinguish the two links.** `0x0D` (dongle info) answers while the mouse
    sleeps; `0x0E` (mouse info) and `0xB4` do not. That split is the cleanest
@@ -822,8 +839,10 @@ section and is the part most likely to cause flaky behaviour if skipped.
 
 None of these block a working tool.
 
-1. The signal-level byte in `0xB4` responses and battery events — range and
-   unit unknown; it drifts between 41 and 58 while the mouse is in use.
+1. Byte `+1` of a `0xB4` response, and byte 3 of a battery event — **not** the
+   signal level this document used to call it (§4a). No vendor tool reads it,
+   and it is the same cabled as wireless. Observed 41–58 and 232–236 in
+   different sessions; even the range is not established.
 2. The `0x0A` reason byte in a link-down event — constant across every captured
    cycle, so possibly a fixed "sleep timeout" code.
 3. cmd `0x14` `+0` — always `0x00`, the last undecoded byte in the sensor block.
@@ -1237,9 +1256,35 @@ and `0x0E` does not (§12).
 ### What a cabled mouse reports differently
 
 - **No dongle firmware.** `0x0D` is refused, so that field is simply absent.
-- **Battery reads 100 % and the signal figure is meaningless.** The mouse is
-  charging, and there is no radio link to measure. Observed `0x64` (100) and a
-  signal byte drifting around `0x75`.
+- **The battery byte is not a state of charge while charging.** An earlier
+  revision of this section said it "reads 100 %", from a single observation.
+  That generalised too far: a v2 sitting at **95 %** over the dongle reported
+  **55** on the cable minutes later. A battery does not lose 40 points by being
+  plugged in.
+
+  **The vendor never shows a cabled percentage either, and its rule is
+  explicit:** under 100 print `Charging`, at 100 or over clamp and print
+  `100%`. In the v2 tool that is the wired arm of `FUN_00417439`
+  (`re/protocol_pass2.c`); in the v1 it is the `0xB4` event arm of
+  `FUN_00415b70` (`re/v1/notify.c`), gated on its connection-mode byte being
+  `0x11` — where `0x11` means "the mouse's own PID is present" and `0x22` means
+  "the dongle is", decided purely by which USB device enumerated
+  (`FUN_00416530`). **[BIN]**
+
+  The threshold is the informative part: the vendor expects the byte to *reach*
+  100 when the cell is full, so the one distinction worth surfacing is
+  charging versus done. `vole` follows the same rule. The charge current most
+  likely spoils the estimate below that, but nothing here establishes the
+  mechanism. **[?]**
+- **Polling rate is greyed out** in the vendor's tool whenever the mouse is on
+  its cable, showing `1000Hz (no Power Saving)`. **[UI]** Why is not
+  established. The obvious reading is that a cabled mouse runs at whatever its
+  USB interface declares, leaving the stored wireless rate inert — but it has
+  not been checked whether the config blob even reports the *stored* rate while
+  cabled. If it reports a forced value instead, then a whole-block write made
+  over the cable would overwrite the user's real setting (§2 rule 1), which
+  would make this a correctness matter rather than a cosmetic one. Worth
+  settling: set 4000 Hz wirelessly, plug the cable in, and read it back.
 - `0x0E` payload `+6..+7` still carries the firmware version, which is how the
   model is identified either way.
 

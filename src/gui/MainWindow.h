@@ -65,7 +65,6 @@ private:
     // info
     QLabel* connectionLabel_ = nullptr;
     QLabel* batteryLabel_    = nullptr;
-    QLabel* signalLabel_     = nullptr;
     QLabel* mouseFwLabel_    = nullptr;
     QLabel* dongleFwLabel_   = nullptr;
     QLabel* statusLabel_     = nullptr;

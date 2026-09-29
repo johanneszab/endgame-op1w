@@ -294,7 +294,7 @@ inline constexpr size_t kBtnFilter = 6;
 // payload is laid out like that command's response - a notification is an
 // unsolicited command reply.
 //
-//   03 B4 <battery> <signal> 0F 00 00 00     battery / signal update
+//   03 B4 <battery> <?> 0F 00 00 00          battery update
 //   03 B1 01 00 00 00 00 00                  radio link up
 //   03 B1 F0 0A 00 00 00 00                  radio link down (deep sleep)
 //
@@ -328,7 +328,18 @@ inline constexpr uint8_t kLinkDownAlt = 0xF1;
 // Offsets within a notification.
 inline constexpr size_t kEvtCode    = 1;
 inline constexpr size_t kEvtBattery = 2;
-inline constexpr size_t kEvtSignal  = 3;
+// This project called byte 3 "signal level" for a long time. It is NOT
+// established to be one, and two observations say it is not link quality:
+//
+//  - The vendor's own cmd 0xB4 helper extracts exactly ONE payload byte, the
+//    percentage, and never looks at this one. No vendor UI displays it. [BIN]
+//  - It reads essentially the same over a cable as over the dongle -- 236 and
+//    232 on the same v2 minutes apart -- and over a cable there is no radio
+//    link to have a quality. [DEV]
+//
+// Left exposed because it plainly carries *something*, but never labelled.
+// PROTOCOL.md section 8.
+inline constexpr size_t kEvtUndecoded1 = 3;
 inline constexpr size_t kEvtTarget  = 4;
 inline constexpr size_t kEvtLink    = 2;
 inline constexpr size_t kEvtReason  = 3;

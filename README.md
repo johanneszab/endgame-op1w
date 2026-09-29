@@ -56,14 +56,17 @@ Everything the vendor tool exposes, firmware updates included:
   and the SPDT GX Safe / GX Speed modes on the left and right buttons
 - **Buttons** — remap to mouse buttons, wheel, media keys, CPI cycle, a fixed
   CPI value, or nothing; left-handed mode
-- **Device** — battery and signal level, mouse and dongle firmware, live
-  sleep/wake state, re-pair, factory reset
+- **Device** — battery level, mouse and dongle firmware, live sleep/wake
+  state, re-pair, factory reset
 - **Firmware updates** — `vole-fw` flashes the vendor's own updater executable,
   so no Windows is needed. See below.
 
 Works over the dongle or with the mouse plugged in by USB-C. A cabled mouse
-reports no dongle firmware and a meaningless battery/signal reading, because
-there is no radio link to describe.
+reports no dongle firmware, because there is no radio link to describe, and no
+battery percentage: it shows **Charging** until the cell is full, which is what
+the vendor's tool does and for the same reason — the level the mouse reports
+while charging is not its actual state of charge. The polling rate is also
+greyed out on the cable, again matching the vendor.
 
 ## Building
 
@@ -189,7 +192,7 @@ exchange with a mutex and implements the vendor tool's retry and back-off rules.
 Don't bypass it.
 
 **Nothing is polled over USB.** The dongle pushes 8-byte notifications
-(report ID `0x03`) carrying battery level, signal level and radio link state.
+(report ID `0x03`) carrying battery level and radio link state.
 The GUI subscribes to that channel: a 1-second timer drains the local hidraw
 queue, which costs nothing, and the device itself is only queried at startup,
 on an explicit Reload, or when a link-up event says there is fresh state worth

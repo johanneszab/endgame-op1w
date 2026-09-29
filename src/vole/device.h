@@ -58,7 +58,7 @@ struct Notification {
 
     // Battery events.
     uint8_t batteryPercent() const { return raw[kEvtBattery]; }
-    uint8_t signalLevel() const    { return raw[kEvtSignal]; }
+    uint8_t undecoded1() const     { return raw[kEvtUndecoded1]; }
 
     // Link-state events. Link-down is the deep-sleep timeout firing. The v1
     // tool accepts 0xF1 as a second down code; no capture shows it. [BIN]
@@ -127,10 +127,17 @@ public:
     bool probe();
 
     // Cmd 0xB4 answers with the same three bytes a battery notification
-    // carries: percentage, signal level, target.
+    // carries: percentage, an undecoded byte, target.
     struct BatteryStatus {
+        // Only meaningful when `charging` is false. While the cable is in, the
+        // device does not report a usable state of charge -- see device.cpp.
         uint8_t percent = 0;
-        uint8_t signal  = 0;
+        // Cable in and not yet full. The vendor shows "Charging" and no number
+        // in this state, and so should any caller.
+        bool    charging = false;
+        // Payload +1. Carries something; what, is not established. Do not
+        // present it as signal strength. See kEvtUndecoded1 in protocol.h.
+        uint8_t undecoded1 = 0;
     };
     std::optional<BatteryStatus> batteryStatus();
     std::optional<int>           batteryPercent();

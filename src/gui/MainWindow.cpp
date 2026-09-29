@@ -160,12 +160,18 @@ QWidget* MainWindow::buildInfoPanel()
 
     connectionLabel_ = new QLabel(tr("—"));
     batteryLabel_    = new QLabel(tr("—"));
-    signalLabel_     = new QLabel(tr("—"));
     mouseFwLabel_    = new QLabel(tr("—"));
     dongleFwLabel_   = new QLabel(tr("—"));
-    signalLabel_->setToolTip(
-        tr("Reported alongside battery level. The unit is not documented; it "
-           "moves around as the mouse is used."));
+    batteryLabel_->setToolTip(
+        tr("Over the cable the mouse does not report a usable charge level, so "
+           "this shows whether it is still charging rather than a number that "
+           "would be wrong. The vendor's own tool does the same."));
+
+    // There is no "Signal" row. A byte arrives next to the battery percentage
+    // and this project used to print it under that name, but nothing
+    // establishes it is one: no vendor tool reads it, and it reads the same
+    // over a cable as over the dongle, where there is no link to measure.
+    // `vole-cli info` still prints it, unlabelled, for anyone decoding it.
 
     grid->addWidget(new QLabel(tr("Connection:")),      0, 0);
     grid->addWidget(connectionLabel_,                   0, 1);
@@ -175,8 +181,6 @@ QWidget* MainWindow::buildInfoPanel()
     grid->addWidget(batteryLabel_,                      1, 1);
     grid->addWidget(new QLabel(tr("Dongle firmware:")), 1, 2);
     grid->addWidget(dongleFwLabel_,                     1, 3);
-    grid->addWidget(new QLabel(tr("Signal:")),          2, 0);
-    grid->addWidget(signalLabel_,                       2, 1);
 
     auto* reloadBtn = new QPushButton(tr("Reload"));
     connect(reloadBtn, &QPushButton::clicked, this, &MainWindow::reload);
@@ -817,11 +821,10 @@ void MainWindow::refreshInfo()
         mouseFwLabel_->setText(QString::fromStdString(v->toString()));
         connectionLabel_->setText(device_.info().wired ? tr("Wired") : tr("Wireless"));
         if (auto s = device_.batteryStatus()) {
-            batteryLabel_->setText(QString("%1 %").arg(s->percent));
-            signalLabel_->setText(QString::number(s->signal));
+            batteryLabel_->setText(s->charging ? tr("Charging")
+                                               : QString("%1 %").arg(s->percent));
         } else {
             batteryLabel_->setText(tr("—"));
-            signalLabel_->setText(tr("—"));
         }
     } else {
         showAsleep();
@@ -966,7 +969,32 @@ void MainWindow::repopulateForModel()
     // polling set applies. The device layer refuses those writes outright;
     // greying the inputs just makes that visible before the user tries.
     lodBox_->setEnabled(known);
-    pollingBox_->setEnabled(known);
+
+    // Polling rate is additionally greyed out while the mouse is on its cable,
+    // which is what the vendor's tool does -- its combo box is disabled in
+    // exactly this state and shows "1000Hz (no Power Saving)". [UI]
+    //
+    // WHY it does that is not established, and this comment will not pretend
+    // otherwise. The plausible reading is that a cabled mouse runs at whatever
+    // its USB interface declares, so the stored wireless rate is inert until
+    // the dongle is back. Whether the blob even reports the stored value while
+    // cabled is untested -- if it reports a forced 1000 Hz instead, then any
+    // whole-block write made over the cable would quietly overwrite the user's
+    // real setting (invariant 1), which is a far better reason to grey it than
+    // tidiness. Until someone checks, matching the vendor is the safe move.
+    const bool wired = device_.info().wired;
+    pollingBox_->setEnabled(known && !wired);
+    if (!pollingBox_->property("baseTip").isValid()) {
+        pollingBox_->setProperty("baseTip", pollingBox_->toolTip());
+    }
+    if (wired) {
+        pollingBox_->setToolTip(
+            tr("The polling rate applies to the wireless link. The vendor's "
+               "tool also disables this while the mouse is on its cable; "
+               "unplug it and use the dongle to change it."));
+    } else if (known) {
+        pollingBox_->setToolTip(pollingBox_->property("baseTip").toString());
+    }
 }
 
 // The widgets only describe the device once a config blob has been read.
@@ -996,7 +1024,6 @@ void MainWindow::showAsleep()
 {
     mouseFwLabel_->setText(tr("—"));
     batteryLabel_->setText(tr("—"));
-    signalLabel_->setText(tr("—"));
     connectionLabel_->setText(tr("Asleep"));
 }
 
@@ -1006,8 +1033,10 @@ void MainWindow::pollEvents()
     // generated unless a link-up event tells us there is fresh state to read.
     while (auto ev = device_.pollEvent()) {
         if (ev->isBattery()) {
-            batteryLabel_->setText(QString("%1 %").arg(ev->batteryPercent()));
-            signalLabel_->setText(QString::number(ev->signalLevel()));
+            // Same rule as the polled read: no percentage while charging.
+            const bool charging = device_.info().wired && ev->batteryPercent() < 100;
+            batteryLabel_->setText(charging ? tr("Charging")
+                                            : QString("%1 %").arg(ev->batteryPercent()));
             connectionLabel_->setText(device_.info().wired ? tr("Wired") : tr("Wireless"));
             mouseFwLabel_->setEnabled(true);
         } else if (ev->isPollingChanged()) {

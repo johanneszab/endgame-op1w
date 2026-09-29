@@ -188,8 +188,17 @@ void cmdInfo(Device& dev)
     if (auto v = dev.mouseFirmware()) {
         std::cout << "Mouse FW    : " << v->toString() << "\n";
         if (auto s = dev.batteryStatus()) {
-            std::cout << "Battery     : " << static_cast<int>(s->percent) << " %\n"
-                      << "Signal      : " << static_cast<int>(s->signal) << "\n";
+            if (s->charging) {
+                std::cout << "Battery     : charging (no usable level over the cable)\n";
+            } else {
+                std::cout << "Battery     : " << static_cast<int>(s->percent) << " %\n";
+            }
+            // Deliberately unlabelled. This used to say "Signal", which was
+            // never established and is contradicted by the byte reading the
+            // same with and without a radio link. Kept visible because it is
+            // the only place anyone decoding it can see it.
+            std::cout << "Undecoded   : " << static_cast<int>(s->undecoded1)
+                      << "  (payload +1, meaning unknown — PROTOCOL.md §8)\n";
         } else {
             std::cout << "Battery     : unavailable\n";
         }
@@ -210,7 +219,7 @@ void cmdListen(Device& dev)
             std::cout << ev->toHex() << "   ";
             if (ev->isBattery()) {
                 std::cout << "battery " << static_cast<int>(ev->batteryPercent())
-                          << " %, signal " << static_cast<int>(ev->signalLevel());
+                          << " %, +1=" << static_cast<int>(ev->undecoded1());
             } else if (ev->isPollingChanged()) {
                 std::cout << "polling rate changed on the mouse: "
                           << pollingLabel(ev->pollingModeByte());

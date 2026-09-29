@@ -330,12 +330,35 @@ std::optional<Device::BatteryStatus> Device::batteryStatus()
         return std::nullopt;
     }
     BatteryStatus s;
-    s.percent = r.payload()[0];
-    s.signal  = r.payload()[1];
-    if (s.percent > 100) {
-        setError("implausible battery reading");
-        return std::nullopt;
+    s.undecoded1 = r.payload()[1];
+    uint8_t pct  = r.payload()[0];
+
+    // While the cable is in, this byte is NOT a state of charge, and the
+    // vendor's own tool never shows it as one: under 100 it prints "Charging",
+    // at 100 or over it clamps and prints "100%" (re/protocol_pass2.c
+    // FUN_00417439, and the v1's 0xB4 event arm in re/v1/notify.c, which gates
+    // the same rule on its connection-mode byte being 0x11 = cabled). [BIN]
+    //
+    // Measurement says why rather than merely that: a v2 sitting at 95% over
+    // the dongle reported 55 on the cable minutes later. A battery does not
+    // lose 40 points by being plugged in, so the number is not what it looks
+    // like -- most likely the charge current spoils the estimate. Reporting it
+    // as a percentage is worse than reporting nothing, because it looks
+    // right. [DEV]
+    //
+    // The vendor's threshold implies the byte does still reach 100 when the
+    // cell is full, which is the one thing worth surfacing: charging vs done.
+    s.charging = info_.wired && pct < 100;
+    if (pct > 100) {
+        // Wireless: a percentage over 100 is a bad read, and there is no
+        // charging story to explain it away. Cabled: clamp, as the vendor does.
+        if (!info_.wired) {
+            setError("implausible battery reading");
+            return std::nullopt;
+        }
+        pct = 100;
     }
+    s.percent = pct;
     return s;
 }
 
