@@ -1277,14 +1277,41 @@ and `0x0E` does not (§12).
   likely spoils the estimate below that, but nothing here establishes the
   mechanism. **[?]**
 - **Polling rate is greyed out** in the vendor's tool whenever the mouse is on
-  its cable, showing `1000Hz (no Power Saving)`. **[UI]** Why is not
-  established. The obvious reading is that a cabled mouse runs at whatever its
-  USB interface declares, leaving the stored wireless rate inert — but it has
-  not been checked whether the config blob even reports the *stored* rate while
-  cabled. If it reports a forced value instead, then a whole-block write made
-  over the cable would overwrite the user's real setting (§2 rule 1), which
-  would make this a correctness matter rather than a cosmetic one. Worth
-  settling: set 4000 Hz wirelessly, plug the cable in, and read it back.
+  its cable, showing `1000Hz (no Power Saving)`. **[UI]**
+
+  **The cause is USB, not the protocol.** A cabled mouse enumerates as a
+  **full-speed** device (`dmesg`: `new full-speed USB device`), and full-speed
+  frames are 1 ms, so an interrupt endpoint cannot be polled faster than
+  1000 Hz however the mouse is configured. 4000 Hz needs high-speed
+  microframes, which is what the dongle provides — the whole reason these mice
+  ship one. **[DEV]**
+
+  The dongle agrees in its own words: its `iProduct` is
+  **`Endgame Gear HS Dongle`**. The vendor never expands "HS", but on a device
+  whose selling point is 4 kHz polling, High Speed is the reading that fits the
+  descriptor evidence. **[DEV]**
+
+  **The vendor's greyed box shows the *effective* rate, not the stored one.**
+  Tested by setting 4000 Hz over the dongle and then attaching the cable:
+
+  | | stored blob (`vole-cli show`) | vendor UI |
+  |---|---|---|
+  | wireless | 4000 Hz | 4000 Hz |
+  | cabled | **4000 Hz** | **1000 Hz**, disabled |
+  | back on the dongle | 4000 Hz | 4000 Hz |
+
+  So the blob keeps the stored value throughout and the substitution is
+  display-only. **[DEV]** That also retires a worry an earlier revision of this
+  section raised: because the stored byte survives, a whole-block write made
+  over the cable writes the *correct* rate back, and there is no clobber. It
+  does raise the same question about the vendor's own tool, which displays
+  1000 Hz and writes whole blocks — untested, and not worth testing on a
+  setting someone cares about.
+
+  `vole` therefore greys the control but keeps showing the **stored** value,
+  which is deliberately not what the vendor does: the block is written from
+  what the UI holds, so displaying the effective rate would stage 1000 Hz for
+  the next write.
 - `0x0E` payload `+6..+7` still carries the firmware version, which is how the
   model is identified either way.
 

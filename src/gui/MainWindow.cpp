@@ -970,18 +970,20 @@ void MainWindow::repopulateForModel()
     // greying the inputs just makes that visible before the user tries.
     lodBox_->setEnabled(known);
 
-    // Polling rate is additionally greyed out while the mouse is on its cable,
-    // which is what the vendor's tool does -- its combo box is disabled in
-    // exactly this state and shows "1000Hz (no Power Saving)". [UI]
+    // Polling rate is additionally greyed out on the cable, as the vendor's
+    // tool does. The reason is USB, not the protocol: a cabled mouse
+    // enumerates as a FULL-SPEED device, whose frames are 1 ms, so the cable
+    // cannot poll faster than 1000 Hz whatever the stored setting says. 4000 Hz
+    // needs high-speed microframes, which is what the dongle is for.
     //
-    // WHY it does that is not established, and this comment will not pretend
-    // otherwise. The plausible reading is that a cabled mouse runs at whatever
-    // its USB interface declares, so the stored wireless rate is inert until
-    // the dongle is back. Whether the blob even reports the stored value while
-    // cabled is untested -- if it reports a forced 1000 Hz instead, then any
-    // whole-block write made over the cable would quietly overwrite the user's
-    // real setting (invariant 1), which is a far better reason to grey it than
-    // tidiness. Until someone checks, matching the vendor is the safe move.
+    // We differ from the vendor in what we SHOW, deliberately. Its combo
+    // displays the effective rate -- a greyed "1000Hz (no Power Saving)" -- so
+    // the stored setting disappears from the UI while cabled. Ours keeps
+    // showing the stored value, because the block is written from what is
+    // displayed (invariant 1) and displaying the real rate would stage 1000 Hz
+    // for the next Apply. Tested: with 4000 Hz stored, the blob still reports
+    // 4000 over the cable, so writing back is safe and greying is only about
+    // not offering a choice that cannot take effect. [DEV]
     const bool wired = device_.info().wired;
     pollingBox_->setEnabled(known && !wired);
     if (!pollingBox_->property("baseTip").isValid()) {
@@ -989,9 +991,10 @@ void MainWindow::repopulateForModel()
     }
     if (wired) {
         pollingBox_->setToolTip(
-            tr("The polling rate applies to the wireless link. The vendor's "
-               "tool also disables this while the mouse is on its cable; "
-               "unplug it and use the dongle to change it."));
+            tr("This is the stored rate, which applies to the wireless link. "
+               "Over the cable the mouse is a full-speed USB device and polls "
+               "at 1000 Hz no matter what this says. Unplug it and use the "
+               "dongle to change it."));
     } else if (known) {
         pollingBox_->setToolTip(pollingBox_->property("baseTip").toString());
     }
