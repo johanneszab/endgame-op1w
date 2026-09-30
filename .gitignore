@@ -73,3 +73,7 @@ Testing/
 # Python bytecode (re/tools/*.py)
 __pycache__/
 *.pyc
+
+# Byte-compiled Python from icons/make-icons.py
+__pycache__/
+*.pyc

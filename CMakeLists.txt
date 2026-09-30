@@ -71,6 +71,31 @@ if(Qt6_FOUND)
     target_link_libraries(vole-gui PRIVATE vole Qt6::Widgets)
     target_compile_options(vole-gui PRIVATE ${VOLE_WARNINGS})
     install(TARGETS vole-gui RUNTIME DESTINATION bin)
+
+    # The window icon is compiled in as well as installed, so a build-tree run
+    # has one. PNGs rather than the SVG because Qt6Svg is not a dependency here
+    # and QIcon cannot read SVG without it. Regenerate with icons/make-icons.py.
+    set(VOLE_ICON_SIZES 16 22 24 32 48 64 128 256 512)
+    set(VOLE_ICON_FILES "")
+    foreach(px ${VOLE_ICON_SIZES})
+        list(APPEND VOLE_ICON_FILES "icons/${px}x${px}/vole.png")
+    endforeach()
+    qt_add_resources(vole-gui "vole_icons"
+        PREFIX "/icons"
+        BASE   "${CMAKE_CURRENT_SOURCE_DIR}/icons"
+        FILES  ${VOLE_ICON_FILES})
+
+    # Desktop integration. Without the .desktop file the icon exists but
+    # nothing references it, so menus and docks still show a default.
+    include(GNUInstallDirs)
+    install(FILES vole.desktop
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    foreach(px ${VOLE_ICON_SIZES})
+        install(FILES "icons/${px}x${px}/vole.png"
+                DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${px}x${px}/apps")
+    endforeach()
+    install(FILES icons/vole.svg
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
 else()
     message(STATUS "Qt6 Widgets not found - building vole-cli only")
 endif()

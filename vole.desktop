@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=vole
+GenericName=Gaming Mouse Configuration
+Comment=Configure Endgame Gear wireless mice — CPI, polling, buttons and sensor
+Exec=vole-gui
+Icon=vole
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=mouse;dpi;cpi;polling;lift-off;hid;endgame;op1w;xm2w;
+StartupNotify=true
+# Qt derives WM_CLASS from QApplication::applicationName(), which main.cpp sets
+# to "vole". Without this, desktops that match windows to launchers by class
+# show the window with a generic icon even though the launcher has the right one.
+StartupWMClass=vole

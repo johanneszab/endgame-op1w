@@ -87,6 +87,27 @@ cmake --build build -j
 
 The GUI is optional — if Qt 6 isn't found, only `vole-cli` is built.
 
+`cmake --install` additionally puts `vole.desktop` and the icons into the usual
+freedesktop locations, so the GUI turns up in menus with an icon rather than a
+blank square. Running from the build tree works too — the icons are compiled
+into the binary as well as installed.
+
+## Icon
+
+<img src="icons/128x128/vole.png?raw=true" width="96" align="left" alt="vole icon" hspace="12"/>
+
+A vole seen from above, which is already the shape of a computer mouse: the body
+is the shell, the seam and wheel are the buttons, and the tail reads as the
+cable.
+
+`icons/make-icons.py` is the source of truth. It emits the SVG **and** every PNG
+size from one geometry description, in stdlib Python with no ImageMagick,
+librsvg or Pillow — it carries its own scanline rasterizer. Edit the shape list,
+re-run it, commit what changes. Below 32 px it hints the geometry rather than
+just scaling it, because a tail one pixel wide antialiases into a grey smudge.
+
+<br clear="left"/>
+
 ## Screenshot:
 ![GUI](images/gui.png?raw=true "GUI")
 
