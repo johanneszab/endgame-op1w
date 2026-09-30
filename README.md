@@ -87,10 +87,31 @@ cmake --build build -j
 
 The GUI is optional — if Qt 6 isn't found, only `vole-cli` is built.
 
-`cmake --install` additionally puts `vole.desktop` and the icons into the usual
-freedesktop locations, so the GUI turns up in menus with an icon rather than a
-blank square. Running from the build tree works too — the icons are compiled
-into the binary as well as installed.
+### Getting the icon and menu entry
+
+`cmake --install` puts `vole.desktop` and the icons into the usual freedesktop
+locations. System-wide, or into your home directory without root:
+
+```bash
+cmake --install build --prefix ~/.local
+update-desktop-database ~/.local/share/applications
+```
+
+**On Wayland this install is not optional, and running `./build/vole-gui`
+directly will never show the icon.** A Wayland client cannot hand the compositor
+an icon at all: it announces an *app ID*, and the shell looks up
+`<app-id>.desktop` and takes `Icon=` from there. So the desktop file *is* the
+icon mechanism, and with nothing installed there is nothing to find — GNOME
+draws its generic placeholder.
+
+The icons compiled into the binary still matter on X11, XWayland and Windows,
+where the window carries its own icon.
+
+If it still does not appear, the app ID is what to check. It must equal the
+desktop file's base name — `vole` — which `main.cpp` sets explicitly with
+`setDesktopFileName()`. Left unset, Qt derives it from the executable name,
+`vole-gui`, which matches no desktop file. A shell that labels the window
+`vole-gui` rather than `vole` is showing you exactly that mismatch.
 
 ## Icon
 
