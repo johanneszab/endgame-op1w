@@ -483,11 +483,41 @@ void MainWindow::reload()
 
     std::array<uint8_t, kBlobSize> blob{};
     if (!device_.readConfigBlob(blob)) {
+        // Capture this BEFORE refreshInfo(), whose own commands overwrite it.
+        const QString err = QString::fromStdString(device_.lastError());
+
+        // Ask anyway, and note that this only works because Device recovers
+        // the link itself after a failed command -- see recoverLocked(). A
+        // sleeping mouse is the usual reason the blob read fails, and the
+        // dongle still answers over USB, so this fills in its firmware and
+        // sets the connection to "Asleep" instead of leaving the whole panel
+        // showing em-dashes as though nothing were plugged in.
+        const LinkState link = refreshInfo();
+
         // Nothing was loaded, so the widgets do not describe the device. Keep
         // Apply disabled rather than let it write whatever they happen to hold.
         setConfigLoaded(false);
         setBusy(false);
-        report(QString::fromStdString(device_.lastError()), true);
+
+        // "config read returned a non-OK status" is true and useless: the
+        // mouse being asleep is not an error the user needs protocol wording
+        // for, and it is by far the likeliest cause. The 0x0D/0x0E split above
+        // is what makes saying so safe rather than a guess.
+        switch (link) {
+        case LinkState::MouseAsleep:
+            report(tr("The mouse is asleep — move it to wake it, then press "
+                      "Reload."), true);
+            break;
+        case LinkState::NoDongle:
+            report(tr("No reply from the mouse or the dongle — is the dongle "
+                      "still plugged in? (%1)").arg(err), true);
+            break;
+        case LinkState::MouseAwake:
+            // The mouse is answering, so this is a real failure and the
+            // protocol-level wording is the useful thing to show.
+            report(err, true);
+            break;
+        }
         return;
     }
     config_ = decodeBlob(blob);
@@ -808,13 +838,15 @@ void MainWindow::applyButtons()
               : QString::fromStdString(device_.lastError()), !ok);
 }
 
-void MainWindow::refreshInfo()
+MainWindow::LinkState MainWindow::refreshInfo()
 {
     // The dongle answers over USB whether or not the mouse is awake, so its
     // firmware stays readable while everything mouse-side goes blank — the
-    // same split the vendor tool shows.
-    if (auto v = device_.dongleFirmware()) {
-        dongleFwLabel_->setText(QString::fromStdString(v->toString()));
+    // same split the vendor tool shows. A CABLED mouse is the other way round:
+    // it refuses 0x0D, so this failing does not mean nothing is there.
+    const auto dongleFw = device_.dongleFirmware();
+    if (dongleFw) {
+        dongleFwLabel_->setText(QString::fromStdString(dongleFw->toString()));
     }
 
     if (auto v = device_.mouseFirmware()) {
@@ -826,9 +858,11 @@ void MainWindow::refreshInfo()
         } else {
             batteryLabel_->setText(tr("—"));
         }
-    } else {
-        showAsleep();
+        return LinkState::MouseAwake;
     }
+
+    showAsleep();
+    return dongleFw ? LinkState::MouseAsleep : LinkState::NoDongle;
 }
 
 void MainWindow::promptFixedCpi(int buttonIndex)

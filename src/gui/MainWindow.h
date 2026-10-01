@@ -19,12 +19,21 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow();
 
+private:
+    // What the two info commands revealed about the link. The dongle answers
+    // cmd 0x0D whether or not the mouse is awake, and the mouse answers 0x0E
+    // only once it is; that split is the documented way to tell "asleep" from
+    // "not reachable at all". See PROTOCOL.md 4a note 2.
+    enum class LinkState { MouseAwake, MouseAsleep, NoDongle };
+
 private slots:
     void reload();
     void applySensor();
     void applyPower();
     void applyButtons();
-    void refreshInfo();
+    // Returns what it learned about the link, so a caller that has just had a
+    // command fail can say why without spending another round trip on it.
+    LinkState refreshInfo();
     void pollEvents();
     void factoryReset();
     void pairDongle();
