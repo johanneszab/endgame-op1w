@@ -88,8 +88,16 @@ if(Qt6_FOUND)
     # Desktop integration. Without the .desktop file the icon exists but
     # nothing references it, so menus and docks still show a default.
     include(GNUInstallDirs)
-    install(FILES vole.desktop
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+
+    # vole.desktop is generated rather than copied, because Exec= has to be an
+    # absolute path and the right one is not known until install time: the same
+    # build tree is installed system-wide and into ~/.local, and
+    # `cmake --install --prefix` overrides the prefix after configuration.
+    # cmake/InstallDesktopFile.cmake.in explains the mechanism.
+    set(VOLE_DESKTOP_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/vole.desktop.in")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/InstallDesktopFile.cmake.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/InstallDesktopFile.cmake" @ONLY)
+    install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/InstallDesktopFile.cmake")
     foreach(px ${VOLE_ICON_SIZES})
         install(FILES "icons/${px}x${px}/vole.png"
                 DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${px}x${px}/apps")

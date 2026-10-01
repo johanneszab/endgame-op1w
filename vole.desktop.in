@@ -3,7 +3,12 @@ Type=Application
 Name=vole
 GenericName=Gaming Mouse Configuration
 Comment=Configure Endgame Gear wireless mice — CPI, polling, buttons and sensor
-Exec=vole-gui
+# Absolute, and written at install time from the prefix actually in use -- see
+# cmake/InstallDesktopFile.cmake.in. A bare "vole-gui" is resolved against the
+# DESKTOP SESSION's PATH, which is not the shell's: a --prefix ~/.local install
+# puts the binary in ~/.local/bin, which plenty of sessions do not have on PATH,
+# and the launcher then silently does nothing. Do not hardcode a prefix here.
+Exec=__VOLE_EXEC__
 Icon=vole
 Terminal=false
 Categories=Settings;HardwareSettings;

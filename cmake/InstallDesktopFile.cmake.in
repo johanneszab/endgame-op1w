@@ -1,0 +1,35 @@
+# Generated from this file at CONFIGURE time, executed at INSTALL time by
+# install(SCRIPT). That split is the whole point: `cmake --install build
+# --prefix ~/.local` overrides CMAKE_INSTALL_PREFIX *after* configuration, so a
+# plain configure_file() would bake in whichever prefix configure happened to
+# see and be wrong for exactly the case this exists to support. Only code that
+# runs at install time observes the real one, which lets a single template
+# serve a system-wide install and a per-user one.
+#
+# @ONLY above means only @VAR@ is substituted now; ${VAR} survives to install
+# time, which is why CMAKE_INSTALL_PREFIX below is the live value.
+
+set(_template "@VOLE_DESKTOP_TEMPLATE@")
+set(_bindir   "@CMAKE_INSTALL_BINDIR@")
+set(_datadir  "@CMAKE_INSTALL_DATADIR@")
+
+# Exec names where the binary will actually LIVE, so it uses the prefix without
+# DESTDIR. DESTDIR is a staging root for package builds and must never appear
+# in an installed file's contents -- only in the path we write to.
+set(_exec "${CMAKE_INSTALL_PREFIX}/${_bindir}/vole-gui")
+set(_dest "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/${_datadir}/applications/vole.desktop")
+
+file(READ "${_template}" _text)
+# The placeholder is __VOLE_EXEC__ and deliberately NOT @VOLE_EXEC@: this file
+# is itself run through configure_file(@ONLY), which would substitute an @...@
+# token here before the script ever runs. VOLE_EXEC is undefined at configure
+# time, so that silently became an empty search string and every installed
+# .desktop kept the literal placeholder while the status message printed the
+# correct path -- a failure that looks like success in the build log.
+string(REPLACE "__VOLE_EXEC__" "${_exec}" _text "${_text}")
+
+get_filename_component(_dir "${_dest}" DIRECTORY)
+file(MAKE_DIRECTORY "${_dir}")
+file(WRITE "${_dest}" "${_text}")
+message(STATUS "Installing: ${_dest}")
+message(STATUS "            Exec=${_exec}")

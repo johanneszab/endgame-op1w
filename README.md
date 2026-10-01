@@ -97,6 +97,29 @@ cmake --install build --prefix ~/.local
 update-desktop-database ~/.local/share/applications
 ```
 
+One desktop file serves both. `Exec=` has to be an **absolute** path, and which
+one is right is not known until install time, so `vole.desktop` is generated
+from `vole.desktop.in` by `cmake/InstallDesktopFile.cmake.in` using the prefix
+actually in use — `/usr/bin/vole-gui` for a system install,
+`~/.local/bin/vole-gui` for the command above. `DESTDIR` is honoured and never
+leaks into the file's contents, so distribution packaging works unchanged.
+
+An absolute path matters because a bare `Exec=vole-gui` is resolved against the
+**desktop session's** `PATH`, which is not your shell's. `~/.local/bin` is on
+the session `PATH` on some distributions and not others, and when it is not,
+the entry appears in the menu and clicking it silently does nothing — there is
+no error anywhere.
+
+Note that this is about *launching*, not *listing*. An entry with an
+unresolvable `Exec` is still shown; only `TryExec=`, which this file
+deliberately does not set, hides one. If the entry does not appear at all, the
+cause is elsewhere — check that the file landed somewhere on `XDG_DATA_DIRS`
+(or in `~/.local/share/applications`), and ask the desktop what it sees:
+
+```bash
+python3 -c "import gi; from gi.repository import Gio; a=Gio.DesktopAppInfo.new('vole.desktop'); print(a and a.get_commandline(), a and a.should_show())"
+```
+
 **On Wayland this install is not optional, and running `./build/vole-gui`
 directly will never show the icon.** A Wayland client cannot hand the compositor
 an icon at all: it announces an *app ID*, and the shell looks up
