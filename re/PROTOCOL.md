@@ -92,7 +92,9 @@ issue `GET_REPORT`, and the device fills it in:
 offset  size  field
    0     1    report ID echo
    1     1    status:  0x01 = ready/OK,  0x03 = busy — retry,
-                         0x07 = not applicable on this connection (§13)
+                         0x07 = not applicable on this connection (§13),
+                         0x08 = mouse unreachable, from 0xB4 (§14),
+                         0x11 = mouse unreachable, from 0x0E and 0x12 (§14)
   16    ..    payload
 ```
 
@@ -152,7 +154,11 @@ Reset button. **[CAP]** See §5 on persistence.
 
 The tool issues `0x0F` with target `0x01` before every real command, as a
 liveness probe; if that fails it retries with target `0x0F`. **[BIN]** **[CAP]**
-A port can skip it, but sending it costs nothing and matches the vendor tool.
+
+> **A port cannot simply skip this.** An earlier revision of this document said
+> it could. It is wrong: once any command has failed, the device answers
+> nothing at all until a `0x0F` gets through, so the probe is a recovery
+> mechanism and not only a courtesy. See §14.
 
 ### Startup sequence **[CAP]**
 
@@ -1348,3 +1354,73 @@ that a cabled mouse ignores the target byte rather than wanting a different
 one.
 
 So cabled support needs nothing beyond the probe fallback described above.
+
+---
+
+## 14. A failed command wedges the device until the next probe
+
+Everything here is **[DEV]**, measured on OP1w 4k v2, mouse firmware 1.07 and
+dongle firmware 1.01, with the mouse in deep sleep so that failures could be
+produced on demand.
+
+### What a sleeping mouse answers
+
+The dongle stays on USB while the mouse's radio link is down, so the two are
+answered by different things and fail differently:
+
+| Command | Mouse asleep | Status |
+|---|---|---|
+| `0x0F` probe, target `0x01` (dongle) | **fails** | `0x03` busy |
+| `0x0F` probe, target `0x0F` (mouse) | **answers** | `0x01` |
+| `0x0D` dongle info | **answers** | `0x01` |
+| `0x0E` mouse info | fails | `0x11` |
+| `0x12` config blob | fails | `0x11` |
+| `0xB4` battery | fails | `0x08` |
+
+`0x11` and `0x08` both mean "the mouse is not reachable"; which one you get
+depends on the command, not on the reason. Note the probe rows: the *mouse*
+target answers while the mouse is asleep and the *dongle* target does not,
+which is the opposite of what the names suggest. A port that probes only with
+target `0x01` and treats failure as fatal will refuse to work with a sleeping
+mouse.
+
+This also confirms §4a note 2 from the other direction: `0x0D` answering while
+`0x0E` does not is a usable "is the mouse awake" test.
+
+### The wedge
+
+**After any failed command, the device stops answering everything until a
+`0x0F` probe succeeds.** It is not a timeout and not a busy state that clears
+on its own:
+
+```
+readConfigBlob()                 -> FAIL (status 0x11, mouse asleep)
+dongleFirmware()  immediately    -> FAIL
+dongleFirmware()  after +200 ms  -> FAIL
+dongleFirmware()  after +400 ms  -> FAIL
+dongleFirmware()  after +800 ms  -> FAIL
+```
+
+A probe clears it immediately, and only a probe that itself succeeds:
+
+```
+failed blob read, then 0x0D directly            -> FAIL
+failed blob read, 0x0F(mouse) OK,  then 0x0D    -> OK
+failed blob read, 0x0F(dongle) FAIL, then 0x0D  -> FAIL
+```
+
+That is why the vendor tool sends `0x0F` before every single command (§3). It
+is not defensive habit; without it the second failure of any sequence is
+indistinguishable from the first, and every later command fails for a reason
+that has nothing to do with what it asked.
+
+### What a port must do
+
+Probing before every command works and is what the vendor does, at the cost of
+doubling the traffic. `vole` instead records that a command failed and probes
+before the next one, which is free in the normal case — `Device::recoverLocked()`.
+
+The symptom of getting this wrong is specific and was how it was found: with
+the mouse asleep, reading the configuration fails, which leaves the device
+wedged, so **waking the mouse and retrying once still fails** and the user has
+to ask twice. Any UI with a Reload button will show it.

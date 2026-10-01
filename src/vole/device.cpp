@@ -254,6 +254,31 @@ bool Device::getReport(uint8_t* buf, size_t len)
     return false;
 }
 
+// Once a command has failed, the device answers NOTHING until a 0x0F probe
+// gets through -- not the command again, and not an unrelated one. Measured on
+// firmware 1.07: after a blob read failed with status 0x11, cmd 0x0D kept
+// failing 200, 400 and 800 ms later, then succeeded immediately once a 0x0F
+// had landed. This is why the vendor tool issues 0x0F before every single
+// command; PROTOCOL.md section 3 called that optional, and it is not.
+//
+// Probing before every command would double the traffic, so instead the
+// failure is remembered and paid for only on the next call. Without it the
+// user-visible symptom is having to press Reload twice after waking the
+// mouse: the first press clears the state the failed read left behind. [DEV]
+bool Device::recoverLocked()
+{
+    Response r;
+    // 0x0F on the mouse target answers even while the mouse is asleep; on the
+    // dongle target it does not, so trying only that one proves nothing.
+    if (commandLocked(Cmd::Probe, Target::Dongle, nullptr, 0, 0, &r, 0) ||
+        commandLocked(Cmd::Probe, Target::Mouse, nullptr, 0, 0, &r, 0)) {
+        return true;
+    }
+    // A cabled mouse rejects 0x0F whatever the target (status 0x07) and
+    // answers 0x0E instead. Invariant 12 / PROTOCOL.md section 13.
+    return commandLocked(Cmd::MouseInfo, Target::None, nullptr, 0, 0, &r, 0);
+}
+
 bool Device::command(Cmd cmd, Target target,
                      const uint8_t* payload, size_t payloadLen,
                      uint8_t chunkIndex, Response* out,
@@ -273,6 +298,21 @@ bool Device::command(Cmd cmd, Target target,
         return false;
     }
 
+    // A probe IS the recovery, so sending one must not recurse into another.
+    if (needsProbe_ && cmd != Cmd::Probe) {
+        recoverLocked();
+    }
+    const bool ok = commandLocked(cmd, target, payload, payloadLen,
+                                  chunkIndex, out, declaredLength);
+    needsProbe_ = !ok;
+    return ok;
+}
+
+bool Device::commandLocked(Cmd cmd, Target target,
+                           const uint8_t* payload, size_t payloadLen,
+                           uint8_t chunkIndex, Response* out,
+                           uint8_t declaredLength)
+{
     std::array<uint8_t, kCmdReportSize> tx{};
     tx[kOffReportId] = kReportCmd;
     tx[kOffCommand]  = static_cast<uint8_t>(cmd);
@@ -396,6 +436,16 @@ bool Device::readConfigBlob(std::array<uint8_t, kBlobSize>& out)
         return false;
     }
 
+    if (needsProbe_) {
+        recoverLocked();
+    }
+    const bool ok = readConfigBlobLocked(out);
+    needsProbe_ = !ok;
+    return ok;
+}
+
+bool Device::readConfigBlobLocked(std::array<uint8_t, kBlobSize>& out)
+{
     std::array<uint8_t, kCmdReportSize> tx{};
     tx[kOffReportId] = kReportCmd;
     tx[kOffCommand]  = static_cast<uint8_t>(Cmd::ReadConfig);

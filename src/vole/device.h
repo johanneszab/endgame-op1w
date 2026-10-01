@@ -176,6 +176,17 @@ public:
 
 private:
     bool requireModel(const char* what);
+
+    // The *Locked variants assume mutex_ is already held, which is what lets
+    // recoverLocked() issue a probe from inside a command without deadlocking
+    // on the non-recursive mutex. Never call them without the lock.
+    bool commandLocked(Cmd cmd, Target target,
+                       const uint8_t* payload, size_t payloadLen,
+                       uint8_t chunkIndex, Response* out,
+                       uint8_t declaredLength);
+    bool readConfigBlobLocked(std::array<uint8_t, kBlobSize>& out);
+    bool recoverLocked();
+
     bool sendReport(const uint8_t* buf, size_t len);
     bool getReport(uint8_t* buf, size_t len);
     void setError(std::string msg);
@@ -183,6 +194,9 @@ private:
     hid_device*        dev_ = nullptr;
     DeviceInfo         info_;
     const ModelInfo*   model_ = nullptr;   // null until cmd 0x0E identifies it
+    // Set whenever a command fails. The device then answers nothing at all
+    // until a 0x0F gets through, so the next call has to probe first.
+    bool               needsProbe_ = false;
     mutable std::mutex mutex_;
     mutable std::mutex errorMutex_;
     std::string        error_;
